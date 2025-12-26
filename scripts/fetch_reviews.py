@@ -1,76 +1,46 @@
 import os
 import json
 import requests
-import pandas as pd
-from textblob import TextBlob
-from datetime import datetime
+from pathlib import Path
 
-# Read secrets from environment (production-safe)
-API_TOKEN = os.getenv("JUDGEME_API_TOKEN")
-SHOP_DOMAIN = os.getenv("SHOP_DOMAIN")
+BASE_URL = "https://judge.me/api/v1/reviews"
+OUTPUT_DIR = Path("data")
+CUSTOMER_CONFIG = Path("config/customers.json")
 
-if not API_TOKEN or not SHOP_DOMAIN:
-    raise Exception("Missing API credentials")
+OUTPUT_DIR.mkdir(exist_ok=True)
 
-def fetch_reviews():
-    url = "https://judge.me/api/v1/reviews"
+def fetch_reviews(shop_domain, api_token):
     params = {
-        "api_token": API_TOKEN,
-        "shop_domain": SHOP_DOMAIN,
+        "shop_domain": shop_domain,
+        "api_token": api_token,
         "per_page": 100
     }
-    response = requests.get(url, params=params)
+
+    response = requests.get(BASE_URL, params=params, timeout=30)
     response.raise_for_status()
     return response.json().get("reviews", [])
 
-def get_sentiment(text):
-    polarity = TextBlob(text).sentiment.polarity
-    if polarity > 0.1:
-        return "Positive"
-    elif polarity < -0.1:
-        return "Negative"
-    return "Neutral"
-
-def process_reviews(reviews):
-    df = pd.DataFrame([
-        {
-            "review_text": r["body"],
-            "rating": r["rating"],
-            "product": r["product_handle"],
-            "created_at": r["created_at"]
-        }
-        for r in reviews
-    ])
-
-    if df.empty:
-        return {}
-
-    df["sentiment"] = df["review_text"].apply(get_sentiment)
-
-    summary = {
-        "generated_at": datetime.utcnow().isoformat(),
-        "total_reviews": int(len(df)),
-        "average_rating": round(df["rating"].mean(), 2),
-        "sentiment_counts": df["sentiment"].value_counts().to_dict(),
-        "latest_reviews": df.sort_values(
-            "created_at", ascending=False
-        ).head(5).to_dict(orient="records")
-    }
-
-    return {
-        "summary": summary,
-        "reviews": df.to_dict(orient="records")
-    }
-
 def main():
-    reviews = fetch_reviews()
-    result = process_reviews(reviews)
+    customers = json.loads(CUSTOMER_CONFIG.read_text())
 
-    os.makedirs("data", exist_ok=True)
-    with open("data/reviews.json", "w") as f:
-        json.dump(result, f, indent=2)
+    for customer in customers:
+        customer_id = customer["customer_id"]
+        shop_domain = customer["shop_domain"]
+        token_secret = customer["api_token_secret"]
 
-    print("reviews.json generated")
+        api_token = os.getenv(token_secret)
+        if not api_token:
+            print(f"❌ Missing token for {customer_id}")
+            continue
+
+        print(f"📥 Fetching reviews for {customer_id}")
+
+        reviews = fetch_reviews(shop_domain, api_token)
+
+        output_file = OUTPUT_DIR / f"{customer_id}_reviews.json"
+        output_file.write_text(json.dumps(reviews, indent=2))
+
+        print(f"✅ Saved {len(reviews)} reviews → {output_file}")
 
 if __name__ == "__main__":
     main()
