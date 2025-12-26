@@ -12,16 +12,15 @@ JUDGEME_API_TOKEN = os.getenv("JUDGEME_API_TOKEN")
 
 def fetch_reviews(product_handle: str, per_page=100):
     url = f"https://judge.me/api/v1/reviews"
-    headers = {
-        "Authorization": f"Bearer {JUDGEME_API_TOKEN}"
-    }
 
-    params = {
-        "shop_domain": SHOP_DOMAIN,
-        "product_handle": product_handle,
-        "per_page": per_page,
-        "page": 1
-    }
+   params = {
+    "shop_domain": SHOP_DOMAIN,
+    "api_token": JUDGEME_API_TOKEN,
+    "product_handle": product_handle,
+    "per_page": per_page,
+    "page": 1
+}
+
 
     all_reviews = []
 
