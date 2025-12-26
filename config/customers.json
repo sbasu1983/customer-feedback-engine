@@ -1,0 +1,12 @@
+[
+  {
+    "customer_id": "customer_1",
+    "shop_domain": "shop1.myshopify.com",
+    "api_token_secret": "JUDGEME_TOKEN_CUSTOMER_1"
+  },
+  {
+    "customer_id": "customer_2",
+    "shop_domain": "shop2.myshopify.com",
+    "api_token_secret": "JUDGEME_TOKEN_CUSTOMER_2"
+  }
+]
