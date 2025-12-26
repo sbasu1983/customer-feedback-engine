@@ -27,7 +27,12 @@ def fetch_reviews(product_handle: str, per_page=100):
 
     while True:
         response = requests.get(url, headers=headers, params=params)
+
+        print("STATUS:", response.status_code)
+        print("RESPONSE TEXT:", response.text)
+
         data = response.json()
+
 
         reviews = data.get("reviews", [])
         if not reviews:
