@@ -1,3 +1,5 @@
 requests
 pandas
 textblob
+fastapi
+uvicorn
