@@ -16,9 +16,10 @@ def fetch_reviews(product_handle: str, per_page: int = 100):
     params = {
         "shop_domain": SHOP_DOMAIN,
         "api_token": JUDGEME_API_TOKEN,
-        "product_handle": product_handle,
+        "product_external_id": 8952367284398,
         "per_page": per_page,
-        "page": 1
+        "page": 1,
+        "published": "true"
     }
 
     all_reviews = []
