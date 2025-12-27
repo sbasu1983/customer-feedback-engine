@@ -1,118 +1,122 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 import requests
 import pandas as pd
 from textblob import TextBlob
 
 app = FastAPI(title="Customer Feedback Insights API")
 
+# ----------------------------
+# Configuration
+# ----------------------------
 SHOP_DOMAIN = "reviewtestingsb.myshopify.com"
 JUDGEME_API_TOKEN = "Lofma_QAgJdAMRLoyEGtQ8yo91U"
-
 SHOPIFY_SHOP_DOMAIN = "reviewtestingsb.myshopify.com"
 SHOPIFY_ADMIN_TOKEN = "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"
 
-
-@app.get("/analyze/all")
-def analyze_all():
-    product_handles = fetch_all_product_handles()
-
-    result = {}
-
-    for handle in product_handles:
-        reviews = fetch_reviews(handle)
-        if not reviews:
-            continue
-
-        rows = []
-        for r in reviews:
-            rows.append({
-                "review": r["body"],
-                "rating": r["rating"],
-                "sentiment": analyze_sentiment(r["body"])
-            })
-
-        df = pd.DataFrame(rows)
-
-        result[handle] = {
-            "total_reviews": len(df),
-            "positive": int((df["sentiment"] == "Positive").sum()),
-            "negative": int((df["sentiment"] == "Negative").sum()),
-            "neutral": int((df["sentiment"] == "Neutral").sum())
-        }
-
-    return result
-
-def fetch_all_product_handles():
-    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2023-10/products.json"
-    headers = {
-        "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN
-    }
-
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-
-    products = response.json().get("products", [])
-    return [p["handle"] for p in products]
-
-def fetch_all_reviews(per_page=100):
-    url = "https://judge.me/api/v1/reviews"
-
-    params = {
-        "shop_domain": SHOP_DOMAIN,
-        "api_token": JUDGEME_API_TOKEN,
-        "per_page": per_page,
-        "page": 1,
-        "published": "true"
-    }
-
-    all_reviews = []
-
-    while True:
-        response = requests.get(url, params=params)
-        data = response.json()
-
-        reviews = data.get("reviews", [])
-        if not reviews:
-            break
-
-        all_reviews.extend(reviews)
-        params["page"] += 1
-
-    return all_reviews
-
-
-def analyze_sentiment(text):
+# ----------------------------
+# Utility Functions
+# ----------------------------
+def analyze_sentiment(text: str) -> str:
     polarity = TextBlob(text).sentiment.polarity
     if polarity > 0.1:
         return "Positive"
     elif polarity < -0.1:
         return "Negative"
-    else:
-        return "Neutral"
+    return "Neutral"
 
+def fetch_all_product_handles():
+    """Fetch all product handles from Shopify"""
+    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2023-10/products.json"
+    headers = {"X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN}
 
-@app.get("/analyze")
-def analyze(product_handle: str = Query(...)):
-    all_reviews = fetch_all_reviews()
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Shopify API error: {e}")
 
-    # ✅ SAFE FILTERING
-    filtered_reviews = [
-        r for r in all_reviews
-        if r.get("product_handle") == product_handle
-    ]
+    products = response.json().get("products", [])
+    return [{"id": p["id"], "handle": p["handle"]} for p in products]
 
-    if not filtered_reviews:
-        return {
-            "error": f"No reviews found for product_handle: {product_handle}"
-        }
+def fetch_reviews_by_product(product_id: int, per_page: int = 100):
+    """Fetch reviews from Judge.me for a specific product"""
+    url = "https://judge.me/api/v1/reviews"
+    params = {
+        "shop_domain": SHOP_DOMAIN,
+        "api_token": JUDGEME_API_TOKEN,
+        "per_page": per_page,
+        "page": 1,
+        "product_id": product_id,
+        "published": "true"
+    }
 
-    rows = []
-    for r in filtered_reviews:
-        rows.append({
+    all_reviews = []
+    while True:
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Judge.me API error: {e}")
+
+        data = response.json()
+        reviews = data.get("reviews", [])
+        if not reviews:
+            break
+        all_reviews.extend(reviews)
+        params["page"] += 1
+
+    return all_reviews
+
+# ----------------------------
+# API Endpoints
+# ----------------------------
+@app.get("/analyze/all")
+def analyze_all():
+    """Analyze all products and return sentiment summaries"""
+    products = fetch_all_product_handles()
+    result = {}
+
+    for p in products:
+        reviews = fetch_reviews_by_product(p["id"])
+        if not reviews:
+            continue
+
+        rows = [{
             "review": r["body"],
             "rating": r["rating"],
             "sentiment": analyze_sentiment(r["body"])
-        })
+        } for r in reviews]
+
+        df = pd.DataFrame(rows)
+
+        result[p["handle"]] = {
+            "total_reviews": len(df),
+            "positive": int((df["sentiment"] == "Positive").sum()),
+            "negative": int((df["sentiment"] == "Negative").sum()),
+            "neutral": int((df["sentiment"] == "Neutral").sum()),
+            "average_rating": round(df["rating"].mean(), 2)
+        }
+
+    return result
+
+@app.get("/analyze")
+def analyze(product_handle: str = Query(...)):
+    """Analyze a single product by handle"""
+    products = fetch_all_product_handles()
+    product = next((p for p in products if p["handle"] == product_handle), None)
+
+    if not product:
+        raise HTTPException(status_code=404, detail=f"Product '{product_handle}' not found")
+
+    reviews = fetch_reviews_by_product(product["id"])
+    if not reviews:
+        return {"product_handle": product_handle, "summary": {}, "reviews": []}
+
+    rows = [{
+        "review": r["body"],
+        "rating": r["rating"],
+        "sentiment": analyze_sentiment(r["body"])
+    } for r in reviews]
 
     df = pd.DataFrame(rows)
 
@@ -120,11 +124,8 @@ def analyze(product_handle: str = Query(...)):
         "total_reviews": len(df),
         "positive": int((df["sentiment"] == "Positive").sum()),
         "negative": int((df["sentiment"] == "Negative").sum()),
-        "neutral": int((df["sentiment"] == "Neutral").sum())
+        "neutral": int((df["sentiment"] == "Neutral").sum()),
+        "average_rating": round(df["rating"].mean(), 2)
     }
 
-    return {
-        "product_handle": product_handle,
-        "summary": summary,
-        "reviews": rows
-    }
+    return {"product_handle": product_handle, "summary": summary, "reviews": rows}
