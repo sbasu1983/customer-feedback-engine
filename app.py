@@ -8,6 +8,51 @@ app = FastAPI(title="Customer Feedback Insights API")
 SHOP_DOMAIN = "reviewtestingsb.myshopify.com"
 JUDGEME_API_TOKEN = "Lofma_QAgJdAMRLoyEGtQ8yo91U"
 
+SHOPIFY_SHOP_DOMAIN = "reviewtestingsb.myshopify.com"
+SHOPIFY_ADMIN_TOKEN = "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"
+
+
+@app.get("/analyze/all")
+def analyze_all():
+    product_handles = fetch_all_product_handles()
+
+    result = {}
+
+    for handle in product_handles:
+        reviews = fetch_reviews(handle)
+        if not reviews:
+            continue
+
+        rows = []
+        for r in reviews:
+            rows.append({
+                "review": r["body"],
+                "rating": r["rating"],
+                "sentiment": analyze_sentiment(r["body"])
+            })
+
+        df = pd.DataFrame(rows)
+
+        result[handle] = {
+            "total_reviews": len(df),
+            "positive": int((df["sentiment"] == "Positive").sum()),
+            "negative": int((df["sentiment"] == "Negative").sum()),
+            "neutral": int((df["sentiment"] == "Neutral").sum())
+        }
+
+    return result
+
+def fetch_all_product_handles():
+    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2023-10/products.json"
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN
+    }
+
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+
+    products = response.json().get("products", [])
+    return [p["handle"] for p in products]
 
 def fetch_all_reviews(per_page=100):
     url = "https://judge.me/api/v1/reviews"
