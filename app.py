@@ -1,39 +1,37 @@
 from fastapi import FastAPI, Query
-import os
 import requests
 import pandas as pd
 from textblob import TextBlob
 
 app = FastAPI(title="Customer Feedback Insights API")
 
+# HARD-CODED FOR DEBUGGING
 SHOP_DOMAIN = "reviewtestingsb.myshopify.com"
 JUDGEME_API_TOKEN = "Lofma_QAgJdAMRLoyEGtQ8yo91U"
 
 
-def fetch_reviews(product_handle: str, per_page=100):
-    url = f"https://judge.me/api/v1/reviews"
+def fetch_reviews(product_handle: str, per_page: int = 100):
+    url = "https://judge.me/api/v1/reviews"
 
-   params = {
-    "shop_domain": SHOP_DOMAIN,
-    "api_token": JUDGEME_API_TOKEN,
-    "product_handle": product_handle,
-    "per_page": per_page,
-    "page": 1
-}
-
+    params = {
+        "shop_domain": SHOP_DOMAIN,
+        "api_token": JUDGEME_API_TOKEN,
+        "product_handle": product_handle,
+        "per_page": per_page,
+        "page": 1
+    }
 
     all_reviews = []
 
     while True:
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, params=params)
 
         print("STATUS:", response.status_code)
-        print("RESPONSE TEXT:", response.text)
+        print("RESPONSE:", response.text)
 
         data = response.json()
-
-
         reviews = data.get("reviews", [])
+
         if not reviews:
             break
 
@@ -43,8 +41,9 @@ def fetch_reviews(product_handle: str, per_page=100):
     return all_reviews
 
 
-def analyze_sentiment(text):
+def analyze_sentiment(text: str) -> str:
     polarity = TextBlob(text).sentiment.polarity
+
     if polarity > 0.1:
         return "Positive"
     elif polarity < -0.1:
@@ -61,12 +60,12 @@ def analyze(product_handle: str = Query(...)):
         return {"error": "No reviews found"}
 
     rows = []
+
     for r in reviews:
-        sentiment = analyze_sentiment(r["body"])
         rows.append({
             "review": r["body"],
             "rating": r["rating"],
-            "sentiment": sentiment
+            "sentiment": analyze_sentiment(r["body"])
         })
 
     df = pd.DataFrame(rows)
