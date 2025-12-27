@@ -1,24 +1,20 @@
 from fastapi import FastAPI, Query
 import requests
-import os
 import pandas as pd
 from textblob import TextBlob
 
 app = FastAPI(title="Customer Feedback Insights API")
 
-# HARD-CODED FOR DEBUGGING
-SHOP_DOMAIN = os.getenv("SHOP_DOMAIN")
-JUDGEME_API_TOKEN = os.getenv("JUDGEME_API_TOKEN")
+SHOP_DOMAIN = "reviewtestingsb.myshopify.com"
+JUDGEME_API_TOKEN = "Lofma_QAgJdAMRLoyEGtQ8yo91U"
 
 
-def fetch_reviews(product_handle: str, per_page: int = 100):
+def fetch_all_reviews(per_page=100):
     url = "https://judge.me/api/v1/reviews"
 
     params = {
         "shop_domain": SHOP_DOMAIN,
         "api_token": JUDGEME_API_TOKEN,
-        #"product_external_id": 8952367284398,
-        "product_handle": product_handle,
         "per_page": per_page,
         "page": 1,
         "published": "true"
@@ -28,13 +24,9 @@ def fetch_reviews(product_handle: str, per_page: int = 100):
 
     while True:
         response = requests.get(url, params=params)
-
-        print("STATUS:", response.status_code)
-        print("RESPONSE:", response.text)
-
         data = response.json()
-        reviews = data.get("reviews", [])
 
+        reviews = data.get("reviews", [])
         if not reviews:
             break
 
@@ -44,9 +36,8 @@ def fetch_reviews(product_handle: str, per_page: int = 100):
     return all_reviews
 
 
-def analyze_sentiment(text: str) -> str:
+def analyze_sentiment(text):
     polarity = TextBlob(text).sentiment.polarity
-
     if polarity > 0.1:
         return "Positive"
     elif polarity < -0.1:
@@ -57,14 +48,21 @@ def analyze_sentiment(text: str) -> str:
 
 @app.get("/analyze")
 def analyze(product_handle: str = Query(...)):
-    reviews = fetch_reviews(product_handle)
+    all_reviews = fetch_all_reviews()
 
-    if not reviews:
-        return {"error": "No reviews found"}
+    # ✅ SAFE FILTERING
+    filtered_reviews = [
+        r for r in all_reviews
+        if r.get("product_handle") == product_handle
+    ]
+
+    if not filtered_reviews:
+        return {
+            "error": f"No reviews found for product_handle: {product_handle}"
+        }
 
     rows = []
-
-    for r in reviews:
+    for r in filtered_reviews:
         rows.append({
             "review": r["body"],
             "rating": r["rating"],
@@ -81,6 +79,7 @@ def analyze(product_handle: str = Query(...)):
     }
 
     return {
+        "product_handle": product_handle,
         "summary": summary,
         "reviews": rows
     }
