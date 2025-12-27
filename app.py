@@ -6,8 +6,8 @@ from textblob import TextBlob
 app = FastAPI(title="Customer Feedback Insights API")
 
 # HARD-CODED FOR DEBUGGING
-SHOP_DOMAIN = "reviewtestingsb.myshopify.com"
-JUDGEME_API_TOKEN = "Lofma_QAgJdAMRLoyEGtQ8yo91U"
+SHOP_DOMAIN = os.getenv("SHOP_DOMAIN")
+JUDGEME_API_TOKEN = os.getenv("JUDGEME_API_TOKEN")
 
 
 def fetch_reviews(product_handle: str, per_page: int = 100):
