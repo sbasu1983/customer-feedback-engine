@@ -36,17 +36,17 @@ def fetch_all_product_handles():
         raise HTTPException(status_code=500, detail=f"Shopify API error: {e}")
 
     products = response.json().get("products", [])
-    return [{"id": p["id"], "handle": p["handle"]} for p in products]
+    return [{"handle": p["handle"]} for p in products]
 
-def fetch_reviews_by_product(product_id: int, per_page: int = 100):
-    """Fetch reviews from Judge.me for a specific product"""
+def fetch_reviews_by_product_handle(product_handle: str, per_page: int = 100):
+    """Fetch reviews from Judge.me for a specific product handle"""
     url = "https://judge.me/api/v1/reviews"
     params = {
         "shop_domain": SHOP_DOMAIN,
         "api_token": JUDGEME_API_TOKEN,
         "per_page": per_page,
         "page": 1,
-        "product_id": product_id,
+        "product_handle": product_handle,
         "published": "true"
     }
 
@@ -62,6 +62,7 @@ def fetch_reviews_by_product(product_id: int, per_page: int = 100):
         reviews = data.get("reviews", [])
         if not reviews:
             break
+
         all_reviews.extend(reviews)
         params["page"] += 1
 
@@ -77,7 +78,7 @@ def analyze_all():
     result = {}
 
     for p in products:
-        reviews = fetch_reviews_by_product(p["id"])
+        reviews = fetch_reviews_by_product_handle(p["handle"])
         if not reviews:
             continue
 
@@ -108,7 +109,7 @@ def analyze(product_handle: str = Query(...)):
     if not product:
         raise HTTPException(status_code=404, detail=f"Product '{product_handle}' not found")
 
-    reviews = fetch_reviews_by_product(product["id"])
+    reviews = fetch_reviews_by_product_handle(product_handle)
     if not reviews:
         return {"product_handle": product_handle, "summary": {}, "reviews": []}
 
