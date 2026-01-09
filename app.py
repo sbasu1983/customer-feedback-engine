@@ -49,19 +49,34 @@ def analyze_sentiment(text: str) -> str:
         return "Negative"
     return "Neutral"
 
+# 🟢 NEW: numeric sentiment score (-1 to +1)
+def sentiment_score(text: str) -> float:
+    return round(TextBlob(text).sentiment.polarity, 2)
+
+# 🟢 NEW: emotion detection placeholder
+def detect_emotions(text: str):
+    # Placeholder: counts 1 if sentiment >0 positive=joy, <0 negative=anger, sadness
+    score = sentiment_score(text)
+    return {
+        "joy": 1 if score > 0.1 else 0,
+        "anger": 1 if score < -0.1 else 0,
+        "sadness": 1 if score < -0.1 else 0,
+        "surprise": 0,
+        "disgust": 0
+    }
+
 # 🟢 NEW: sentiment percentage helper
 def sentiment_percentages(df):
     total = len(df)
     if total == 0:
         return {"positive_pct": 0, "negative_pct": 0, "neutral_pct": 0}
-
     return {
         "positive_pct": round((df["sentiment"] == "Positive").sum() / total * 100, 2),
         "negative_pct": round((df["sentiment"] == "Negative").sum() / total * 100, 2),
         "neutral_pct": round((df["sentiment"] == "Neutral").sum() / total * 100, 2),
     }
 
-# 🟢 NEW: complaint keyword map
+# 🟢 NEW: complaint & praise keyword maps
 COMPLAINT_KEYWORDS = {
     "quality": ["quality", "broken", "damaged", "defective", "poor"],
     "delivery": ["late", "delay", "shipping", "delivery"],
@@ -71,12 +86,19 @@ COMPLAINT_KEYWORDS = {
     "support": ["support", "customer service", "help"]
 }
 
-# 🟢 NEW: complaint theme extraction
-def extract_complaint_themes(reviews):
+PRAISE_KEYWORDS = {
+    "quality": ["good quality", "excellent", "durable", "well made"],
+    "delivery": ["fast delivery", "quick shipping", "on time"],
+    "price": ["affordable", "cheap", "worth it"],
+    "fit": ["perfect fit", "comfortable", "nice fit"]
+}
+
+# 🟢 NEW: complaint/praise extraction
+def extract_themes(reviews, keywords_map):
     themes = {}
     for r in reviews:
         text = r["review"].lower()
-        for theme, keywords in COMPLAINT_KEYWORDS.items():
+        for theme, keywords in keywords_map.items():
             if any(k in text for k in keywords):
                 themes[theme] = themes.get(theme, 0) + 1
     return dict(sorted(themes.items(), key=lambda x: x[1], reverse=True))
@@ -119,7 +141,6 @@ def fetch_all_reviews(per_page=100):
     }
 
     all_reviews = []
-
     while True:
         try:
             r = requests.get(url, params=params, timeout=20)
@@ -155,7 +176,6 @@ def verify_shopify_webhook(request: Request, body: bytes):
         hashlib.sha256
     ).digest()
     computed_hmac = base64.b64encode(digest).decode()
-
     if not hmac.compare_digest(computed_hmac, hmac_header):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
@@ -189,6 +209,44 @@ def health():
     return {"status": "ok"}
 
 # -------------------------------------------------
+# ANALYSIS HELPERS
+# -------------------------------------------------
+def summarize_reviews(product_reviews):
+    rows = []
+    for r in product_reviews:
+        review_text = r["body"]
+        row = {
+            "review": review_text,
+            "rating": r["rating"],
+            "sentiment": analyze_sentiment(review_text),
+            "sentiment_score": sentiment_score(review_text),  # 🟢 NEW
+            "emotions": detect_emotions(review_text),         # 🟢 NEW
+            "length": len(review_text)
+        }
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    negative_reviews = [r for r in rows if r["sentiment"] == "Negative"]
+    positive_reviews = [r for r in rows if r["sentiment"] == "Positive"]
+
+    # 🟢 NEW: at-risk flag if rating < 3 or negative reviews > 50%
+    avg_rating = round(df["rating"].mean(), 2)
+    at_risk = avg_rating < 3 or (len(negative_reviews)/len(df) > 0.5)
+
+    return {
+        "total_reviews": len(df),
+        "average_rating": avg_rating,
+        "positive": int((df["sentiment"] == "Positive").sum()),
+        "negative": int((df["sentiment"] == "Negative").sum()),
+        "neutral": int((df["sentiment"] == "Neutral").sum()),
+        **sentiment_percentages(df),
+        "common_complaints": extract_themes(negative_reviews, COMPLAINT_KEYWORDS),
+        "common_praises": extract_themes(positive_reviews, PRAISE_KEYWORDS),  # 🟢 NEW
+        "average_review_length": round(df["length"].mean(), 2),                # 🟢 NEW
+        "at_risk_flag": at_risk,
+        "review_trends": [{"rating": r["rating"], "sentiment_score": r["sentiment_score"]} for r in rows]  # 🟢 NEW
+    }
+
+# -------------------------------------------------
 # ANALYZE ALL PRODUCTS
 # -------------------------------------------------
 @app.get("/analyze/all")
@@ -201,26 +259,7 @@ def analyze_all():
         product_reviews = [r for r in all_reviews if r.get("product_handle") == handle]
         if not product_reviews:
             continue
-
-        rows = [{
-            "review": r["body"],
-            "rating": r["rating"],
-            "sentiment": analyze_sentiment(r["body"])
-        } for r in product_reviews]
-
-        df = pd.DataFrame(rows)
-        negative_reviews = [r for r in rows if r["sentiment"] == "Negative"]
-
-        result[handle] = {
-            "total_reviews": len(df),
-            "average_rating": round(df["rating"].mean(), 2),
-            "positive": int((df["sentiment"] == "Positive").sum()),
-            "negative": int((df["sentiment"] == "Negative").sum()),
-            "neutral": int((df["sentiment"] == "Neutral").sum()),
-            **sentiment_percentages(df),
-            "common_complaints": extract_complaint_themes(negative_reviews)
-        }
-
+        result[handle] = summarize_reviews(product_reviews)
     return result
 
 # -------------------------------------------------
@@ -237,25 +276,11 @@ def analyze(product_handle: str = Query(...)):
     if not filtered_reviews:
         return {"product_handle": product_handle, "summary": {}, "reviews": []}
 
-    rows = [{
-        "review": r["body"],
-        "rating": r["rating"],
-        "sentiment": analyze_sentiment(r["body"])
-    } for r in filtered_reviews]
-
-    df = pd.DataFrame(rows)
-    negative_reviews = [r for r in rows if r["sentiment"] == "Negative"]
+    summary = summarize_reviews(filtered_reviews)
+    reviews = [{"review": r["body"], "rating": r["rating"], "sentiment": analyze_sentiment(r["body"])} for r in filtered_reviews]
 
     return {
         "product_handle": product_handle,
-        "summary": {
-            "total_reviews": len(df),
-            "average_rating": round(df["rating"].mean(), 2),
-            "positive": int((df["sentiment"] == "Positive").sum()),
-            "negative": int((df["sentiment"] == "Negative").sum()),
-            "neutral": int((df["sentiment"] == "Neutral").sum()),
-            **sentiment_percentages(df),
-            "common_complaints": extract_complaint_themes(negative_reviews)
-        },
-        "reviews": rows
+        "summary": summary,
+        "reviews": reviews
     }
