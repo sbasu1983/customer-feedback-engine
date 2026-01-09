@@ -10,19 +10,22 @@ import hashlib
 import base64
 from fastapi.middleware.cors import CORSMiddleware
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Later replace "*" with your Wix site domain
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
 
 # -------------------------------------------------
 # APP
 # -------------------------------------------------
 app = FastAPI(title="Customer Feedback Insights API")
-
+# -------------------------------------------------
+# CORS MIDDLEWARE
+# -------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # later replace "*" with your Wix domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # -------------------------------------------------
 # ENV CONFIG
 # -------------------------------------------------
