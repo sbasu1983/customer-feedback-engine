@@ -8,6 +8,15 @@ from threading import Lock
 import hmac
 import hashlib
 import base64
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Later replace "*" with your Wix site domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # -------------------------------------------------
 # APP
