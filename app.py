@@ -23,8 +23,8 @@ JUDGEME_API_TOKEN = os.getenv("JUDGEME_API_TOKEN")
 SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", SHOP_DOMAIN)
 SHOPIFY_ADMIN_TOKEN = os.getenv("SHOPIFY_ADMIN_TOKEN")
 
-SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET")  # 🟢 NEW
-SHOPIFY_API_VERSION = "2025-04"  # 🔴 UPDATED
+SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET")
+SHOPIFY_API_VERSION = "2025-04"
 
 # -------------------------------------------------
 # CACHE CONFIG
@@ -49,11 +49,43 @@ def analyze_sentiment(text: str) -> str:
         return "Negative"
     return "Neutral"
 
+# 🟢 NEW: sentiment percentage helper
+def sentiment_percentages(df):
+    total = len(df)
+    if total == 0:
+        return {"positive_pct": 0, "negative_pct": 0, "neutral_pct": 0}
+
+    return {
+        "positive_pct": round((df["sentiment"] == "Positive").sum() / total * 100, 2),
+        "negative_pct": round((df["sentiment"] == "Negative").sum() / total * 100, 2),
+        "neutral_pct": round((df["sentiment"] == "Neutral").sum() / total * 100, 2),
+    }
+
+# 🟢 NEW: complaint keyword map
+COMPLAINT_KEYWORDS = {
+    "quality": ["quality", "broken", "damaged", "defective", "poor"],
+    "delivery": ["late", "delay", "shipping", "delivery"],
+    "price": ["price", "expensive", "cost", "overpriced"],
+    "size_fit": ["size", "fit", "small", "large", "tight"],
+    "packaging": ["packaging", "box", "packed"],
+    "support": ["support", "customer service", "help"]
+}
+
+# 🟢 NEW: complaint theme extraction
+def extract_complaint_themes(reviews):
+    themes = {}
+    for r in reviews:
+        text = r["review"].lower()
+        for theme, keywords in COMPLAINT_KEYWORDS.items():
+            if any(k in text for k in keywords):
+                themes[theme] = themes.get(theme, 0) + 1
+    return dict(sorted(themes.items(), key=lambda x: x[1], reverse=True))
+
 # -------------------------------------------------
 # SHOPIFY
 # -------------------------------------------------
 def fetch_all_product_handles():
-    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/{SHOPIFY_API_VERSION}/products.json"  # 🔴 UPDATED
+    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/{SHOPIFY_API_VERSION}/products.json"
     headers = {"X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN}
 
     try:
@@ -95,8 +127,7 @@ def fetch_all_reviews(per_page=100):
         except requests.RequestException as e:
             raise HTTPException(status_code=500, detail=f"Judge.me API error: {e}")
 
-        data = r.json()
-        reviews = data.get("reviews", [])
+        reviews = r.json().get("reviews", [])
         if not reviews:
             break
 
@@ -116,7 +147,7 @@ def get_reviews_cached():
 # -------------------------------------------------
 # SHOPIFY WEBHOOK VERIFICATION
 # -------------------------------------------------
-def verify_shopify_webhook(request: Request, body: bytes):  # 🟢 NEW
+def verify_shopify_webhook(request: Request, body: bytes):
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
     digest = hmac.new(
         SHOPIFY_WEBHOOK_SECRET.encode(),
@@ -131,12 +162,11 @@ def verify_shopify_webhook(request: Request, body: bytes):  # 🟢 NEW
 # -------------------------------------------------
 # WEBHOOKS
 # -------------------------------------------------
-@app.post("/webhooks/products")  # 🟢 NEW
+@app.post("/webhooks/products")
 async def product_webhook(request: Request):
     body = await request.body()
     verify_shopify_webhook(request, body)
 
-    # Invalidate product cache
     with product_lock:
         product_cache["handles"] = []
         product_cache["last_updated"] = 0
@@ -144,7 +174,7 @@ async def product_webhook(request: Request):
     return {"status": "ok"}
 
 # -------------------------------------------------
-# STARTUP (PRE-WARM CACHE)
+# STARTUP
 # -------------------------------------------------
 @app.on_event("startup")
 def startup_event():
@@ -165,15 +195,10 @@ def health():
 def analyze_all():
     product_handles = get_product_handles_cached()
     all_reviews = get_reviews_cached()
-
     result = {}
 
     for handle in product_handles:
-        product_reviews = [
-            r for r in all_reviews
-            if r.get("product_handle") == handle
-        ]
-
+        product_reviews = [r for r in all_reviews if r.get("product_handle") == handle]
         if not product_reviews:
             continue
 
@@ -184,13 +209,16 @@ def analyze_all():
         } for r in product_reviews]
 
         df = pd.DataFrame(rows)
+        negative_reviews = [r for r in rows if r["sentiment"] == "Negative"]
 
         result[handle] = {
             "total_reviews": len(df),
+            "average_rating": round(df["rating"].mean(), 2),
             "positive": int((df["sentiment"] == "Positive").sum()),
             "negative": int((df["sentiment"] == "Negative").sum()),
             "neutral": int((df["sentiment"] == "Neutral").sum()),
-            "average_rating": round(df["rating"].mean(), 2)
+            **sentiment_percentages(df),
+            "common_complaints": extract_complaint_themes(negative_reviews)
         }
 
     return result
@@ -200,27 +228,14 @@ def analyze_all():
 # -------------------------------------------------
 @app.get("/analyze")
 def analyze(product_handle: str = Query(...)):
-    product_handles = get_product_handles_cached()
-
-    if product_handle not in product_handles:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Product '{product_handle}' not found in Shopify"
-        )
+    if product_handle not in get_product_handles_cached():
+        raise HTTPException(status_code=404, detail="Product not found")
 
     all_reviews = get_reviews_cached()
-
-    filtered_reviews = [
-        r for r in all_reviews
-        if r.get("product_handle") == product_handle
-    ]
+    filtered_reviews = [r for r in all_reviews if r.get("product_handle") == product_handle]
 
     if not filtered_reviews:
-        return {
-            "product_handle": product_handle,
-            "summary": {},
-            "reviews": []
-        }
+        return {"product_handle": product_handle, "summary": {}, "reviews": []}
 
     rows = [{
         "review": r["body"],
@@ -229,15 +244,18 @@ def analyze(product_handle: str = Query(...)):
     } for r in filtered_reviews]
 
     df = pd.DataFrame(rows)
+    negative_reviews = [r for r in rows if r["sentiment"] == "Negative"]
 
     return {
         "product_handle": product_handle,
         "summary": {
             "total_reviews": len(df),
+            "average_rating": round(df["rating"].mean(), 2),
             "positive": int((df["sentiment"] == "Positive").sum()),
             "negative": int((df["sentiment"] == "Negative").sum()),
             "neutral": int((df["sentiment"] == "Neutral").sum()),
-            "average_rating": round(df["rating"].mean(), 2)
+            **sentiment_percentages(df),
+            "common_complaints": extract_complaint_themes(negative_reviews)
         },
         "reviews": rows
     }
