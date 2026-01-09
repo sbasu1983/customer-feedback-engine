@@ -39,7 +39,7 @@ product_lock = Lock()
 review_lock = Lock()
 
 # -------------------------------------------------
-# SENTIMENT
+# SENTIMENT & EMOTION
 # -------------------------------------------------
 def analyze_sentiment(text: str) -> str:
     polarity = TextBlob(text).sentiment.polarity
@@ -196,7 +196,7 @@ def summarize_reviews(product_reviews):
     emotion_summary = {"joy": 0, "anger": 0, "sadness": 0, "surprise": 0, "disgust": 0}
     for r in product_reviews:
         review_text = r["body"]
-        timestamp = r.get("created_at", "")  # 🟢 NEW: store timestamp
+        timestamp = r.get("created_at", "")
         row = {
             "review": review_text,
             "rating": r["rating"],
@@ -204,7 +204,7 @@ def summarize_reviews(product_reviews):
             "sentiment_score": sentiment_score(review_text),
             "emotions": detect_emotions(review_text),
             "length": len(review_text),
-            "timestamp": timestamp  # 🟢 NEW
+            "timestamp": timestamp
         }
         for k, v in row["emotions"].items():
             emotion_summary[k] += v
@@ -216,8 +216,21 @@ def summarize_reviews(product_reviews):
 
     avg_rating = round(df["rating"].mean(), 2)
     negative_pct = (len(negative_reviews) / len(df)) if df.shape[0] else 0
-    # 🟢 NEW: weighted risk score
     weighted_risk_score = round((1 - avg_rating/5) * 0.7 + negative_pct * 0.3, 2)
+
+    # 🟢 Monthly trends
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    df['year_month'] = df['timestamp'].dt.to_period('M')
+    monthly_trends = []
+    if not df['year_month'].isnull().all():
+        grouped = df.groupby('year_month')
+        for period, g in grouped:
+            monthly_trends.append({
+                "month": str(period),
+                "average_rating": round(g["rating"].mean(), 2),
+                "average_sentiment_score": round(g["sentiment_score"].mean(), 2),
+                "review_count": len(g)
+            })
 
     return {
         "total_reviews": len(df),
@@ -230,16 +243,19 @@ def summarize_reviews(product_reviews):
         "common_praises": extract_themes(positive_reviews, PRAISE_KEYWORDS),
         "average_review_length": round(df["length"].mean(), 2),
         "at_risk_flag": avg_rating < 3 or negative_pct > 0.5,
-        "weighted_risk_score": weighted_risk_score,  # 🟢 NEW
-        "emotion_summary": emotion_summary,          # 🟢 NEW
+        "weighted_risk_score": weighted_risk_score,
+        "emotion_summary": emotion_summary,
         "review_trends": [{"rating": r["rating"], "sentiment_score": r["sentiment_score"], "timestamp": r["timestamp"]} for r in rows],
-        # 🟢 NEW: top keywords combining complaints + praises
         "top_keywords": {
             "positive": list(extract_themes(positive_reviews, PRAISE_KEYWORDS).keys()),
             "negative": list(extract_themes(negative_reviews, COMPLAINT_KEYWORDS).keys())
-        }
+        },
+        "monthly_trends": monthly_trends
     }
 
+# -------------------------------------------------
+# ANALYZE ALL PRODUCTS
+# -------------------------------------------------
 @app.get("/analyze/all")
 def analyze_all():
     product_handles = get_product_handles_cached()
@@ -252,6 +268,9 @@ def analyze_all():
         result[handle] = summarize_reviews(product_reviews)
     return result
 
+# -------------------------------------------------
+# ANALYZE SINGLE PRODUCT
+# -------------------------------------------------
 @app.get("/analyze")
 def analyze(product_handle: str = Query(...)):
     if product_handle not in get_product_handles_cached():
