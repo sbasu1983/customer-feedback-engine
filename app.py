@@ -1,10 +1,13 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 import requests
 import pandas as pd
 from textblob import TextBlob
 import os
 import time
 from threading import Lock
+import hmac
+import hashlib
+import base64
 
 # -------------------------------------------------
 # APP
@@ -20,11 +23,14 @@ JUDGEME_API_TOKEN = os.getenv("JUDGEME_API_TOKEN")
 SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", SHOP_DOMAIN)
 SHOPIFY_ADMIN_TOKEN = os.getenv("SHOPIFY_ADMIN_TOKEN")
 
+SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET")  # 🟢 NEW
+SHOPIFY_API_VERSION = "2025-04"  # 🔴 UPDATED
+
 # -------------------------------------------------
 # CACHE CONFIG
 # -------------------------------------------------
-PRODUCT_CACHE_TTL = 300       # 5 minutes
-REVIEW_CACHE_TTL = 300        # 5 minutes
+PRODUCT_CACHE_TTL = 300
+REVIEW_CACHE_TTL = 300
 
 product_cache = {"handles": [], "last_updated": 0}
 review_cache = {"reviews": [], "last_updated": 0}
@@ -47,7 +53,7 @@ def analyze_sentiment(text: str) -> str:
 # SHOPIFY
 # -------------------------------------------------
 def fetch_all_product_handles():
-    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2023-10/products.json"
+    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/{SHOPIFY_API_VERSION}/products.json"  # 🔴 UPDATED
     headers = {"X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN}
 
     try:
@@ -62,13 +68,9 @@ def fetch_all_product_handles():
 def get_product_handles_cached():
     now = time.time()
     with product_lock:
-        if (
-            not product_cache["handles"]
-            or now - product_cache["last_updated"] > PRODUCT_CACHE_TTL
-        ):
+        if not product_cache["handles"] or now - product_cache["last_updated"] > PRODUCT_CACHE_TTL:
             product_cache["handles"] = fetch_all_product_handles()
             product_cache["last_updated"] = now
-
     return product_cache["handles"]
 
 # -------------------------------------------------
@@ -106,14 +108,40 @@ def fetch_all_reviews(per_page=100):
 def get_reviews_cached():
     now = time.time()
     with review_lock:
-        if (
-            not review_cache["reviews"]
-            or now - review_cache["last_updated"] > REVIEW_CACHE_TTL
-        ):
+        if not review_cache["reviews"] or now - review_cache["last_updated"] > REVIEW_CACHE_TTL:
             review_cache["reviews"] = fetch_all_reviews()
             review_cache["last_updated"] = now
-
     return review_cache["reviews"]
+
+# -------------------------------------------------
+# SHOPIFY WEBHOOK VERIFICATION
+# -------------------------------------------------
+def verify_shopify_webhook(request: Request, body: bytes):  # 🟢 NEW
+    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
+    digest = hmac.new(
+        SHOPIFY_WEBHOOK_SECRET.encode(),
+        body,
+        hashlib.sha256
+    ).digest()
+    computed_hmac = base64.b64encode(digest).decode()
+
+    if not hmac.compare_digest(computed_hmac, hmac_header):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+# -------------------------------------------------
+# WEBHOOKS
+# -------------------------------------------------
+@app.post("/webhooks/products")  # 🟢 NEW
+async def product_webhook(request: Request):
+    body = await request.body()
+    verify_shopify_webhook(request, body)
+
+    # Invalidate product cache
+    with product_lock:
+        product_cache["handles"] = []
+        product_cache["last_updated"] = 0
+
+    return {"status": "ok"}
 
 # -------------------------------------------------
 # STARTUP (PRE-WARM CACHE)
