@@ -371,8 +371,6 @@ def ratings_actions(
         dt = safe_review_datetime(r.get("created_at"))
         if dt is None or pd.isna(dt):
             continue
-        if not (cutoff_total <= dt <= now):
-            continue
         if not r.get("product_handle") or not r.get("rating") or not r.get("body"):
             continue
 
