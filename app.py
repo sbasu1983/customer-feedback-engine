@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException, Request
+from typing import Optional
 import requests
 import pandas as pd
 from textblob import TextBlob
