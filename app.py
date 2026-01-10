@@ -258,7 +258,7 @@ def ratings_at_risk(threshold: float = Query(0.6, description="Weighted risk sco
 
         if weighted_risk_score >= threshold:
             # Top complaints
-            negative_reviews = [r for r in product_reviews if analyze_sentiment(r["body"]) == "Negative"]
+            negative_reviews = [{"review": r["body"]} for r in product_reviews if analyze_sentiment(r["body"]) == "Negative"]
             top_complaints = list(extract_themes(negative_reviews, COMPLAINT_KEYWORDS).keys())
 
             at_risk_products.append({
