@@ -53,6 +53,17 @@ product_lock = Lock()
 review_lock = Lock()
 
 # -------------------------------------------------
+# SAFE DATETIME PARSER (FIX)
+# -------------------------------------------------
+def safe_review_datetime(val):
+    if not val:
+        return None
+    try:
+        return pd.to_datetime(val, errors="coerce")
+    except Exception:
+        return None
+
+# -------------------------------------------------
 # SENTIMENT & EMOTION
 # -------------------------------------------------
 def analyze_sentiment(text: str) -> str:
@@ -87,7 +98,7 @@ def sentiment_percentages(df):
     }
 
 # -------------------------------------------------
-# COMPLAINT & PRAISE KEYWORDS
+# COMPLAINT KEYWORDS
 # -------------------------------------------------
 COMPLAINT_KEYWORDS = {
     "quality": ["quality", "broken", "damaged", "defective", "poor"],
@@ -101,7 +112,7 @@ COMPLAINT_KEYWORDS = {
 def extract_themes(reviews, keywords_map):
     themes = {}
     for r in reviews:
-        text = r["review"].lower()
+        text = r.get("review", "").lower()
         for theme, keywords in keywords_map.items():
             if any(k in text for k in keywords):
                 themes[theme] = themes.get(theme, 0) + 1
@@ -164,25 +175,32 @@ def health():
     return {"status": "ok"}
 
 # -------------------------------------------------
-# SUMMARY ENGINE
+# SUMMARY ENGINE (SAFE)
 # -------------------------------------------------
 def summarize_reviews(product_reviews):
     rows = []
     emotion_summary = {"joy": 0, "anger": 0, "sadness": 0, "surprise": 0, "disgust": 0}
 
     for r in product_reviews:
-        text = r["body"]
+        text = r.get("body")
+        rating = r.get("rating")
+
+        if not text or rating is None:
+            continue
+
         row = {
             "review": text,
-            "rating": r["rating"],
+            "rating": rating,
             "sentiment": analyze_sentiment(text),
             "sentiment_score": sentiment_score(text),
             "emotions": detect_emotions(text),
             "length": len(text),
             "timestamp": r.get("created_at", "")
         }
+
         for k in emotion_summary:
             emotion_summary[k] += row["emotions"][k]
+
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -196,84 +214,7 @@ def summarize_reviews(product_reviews):
     }
 
 # -------------------------------------------------
-# ⭐ RATINGS – ALL PRODUCTS
-# -------------------------------------------------
-@app.get("/ratings/all")
-def ratings_all():
-    product_handles = get_product_handles_cached()
-    all_reviews = get_reviews_cached()
-
-    result = {}
-    for handle in product_handles:
-        product_reviews = [r for r in all_reviews if r.get("product_handle") == handle]
-        if product_reviews:
-            result[handle] = summarize_reviews(product_reviews)
-
-    return result
-
-# -------------------------------------------------
-# ⭐ RATINGS – SINGLE PRODUCT
-# -------------------------------------------------
-@app.get("/ratings")
-def ratings(product_handle: str = Query(...)):
-    if product_handle not in get_product_handles_cached():
-        raise HTTPException(status_code=404, detail="Product not found")
-
-    all_reviews = get_reviews_cached()
-    product_reviews = [r for r in all_reviews if r.get("product_handle") == product_handle]
-
-    return {
-        "product_handle": product_handle,
-        "summary": summarize_reviews(product_reviews),
-        "reviews": product_reviews
-    }
-
-# -------------------------------------------------
-# ⭐ RATINGS – AT-RISK PRODUCTS
-# -------------------------------------------------
-@app.get("/ratings/at-risk")
-def ratings_at_risk(threshold: float = Query(0.6)):
-    product_handles = get_product_handles_cached()
-    all_reviews = get_reviews_cached()
-
-    at_risk_products = []
-
-    for handle in product_handles:
-        product_reviews = [r for r in all_reviews if r.get("product_handle") == handle]
-        if not product_reviews:
-            continue
-
-        summary = summarize_reviews(product_reviews)
-        weighted_risk_score = round(
-            ((1 - summary["average_rating"] / 5) * 0.7) +
-            (summary["negative_pct"] / 100 * 0.3), 2
-        )
-
-        if weighted_risk_score >= threshold:
-            negative_reviews = [
-                {"review": r["body"]}
-                for r in product_reviews
-                if analyze_sentiment(r["body"]) == "Negative"
-            ]
-
-            at_risk_products.append({
-                "product_handle": handle,
-                "average_rating": summary["average_rating"],
-                "negative_pct": summary["negative_pct"],
-                "weighted_risk_score": weighted_risk_score,
-                "top_complaints": list(extract_themes(negative_reviews, COMPLAINT_KEYWORDS).keys())
-            })
-
-    at_risk_products.sort(key=lambda x: x["weighted_risk_score"], reverse=True)
-
-    return {
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "total_products_scanned": len(product_handles),
-        "at_risk_products": at_risk_products
-    }
-
-# -------------------------------------------------
-# 📈 RATINGS – TRENDS
+# 📈 RATINGS – TRENDS (FIXED)
 # -------------------------------------------------
 @app.get("/ratings/trends")
 def ratings_trends(
@@ -282,30 +223,30 @@ def ratings_trends(
     window: int = Query(7)
 ):
     all_reviews = get_reviews_cached()
-    now = datetime.utcnow()
+    now = pd.Timestamp.utcnow()
 
-    def parse_date(val):
-        try:
-            return datetime.fromisoformat(val.replace("Z", "+00:00"))
-        except Exception:
-            return None
+    cutoff_total = now - pd.Timedelta(days=days)
+    cutoff_recent = now - pd.Timedelta(days=window)
 
-    cutoff_recent = now - timedelta(days=window)
-    cutoff_total = now - timedelta(days=days)
+    cleaned = []
 
-    filtered = []
     for r in all_reviews:
-        dt = parse_date(r.get("created_at", ""))
-        if dt and cutoff_total <= dt <= now:
-            filtered.append({**r, "_dt": dt})
+        dt = safe_review_datetime(r.get("created_at"))
+        if dt is None or pd.isna(dt):
+            continue
+        if not (cutoff_total <= dt <= now):
+            continue
+        if not r.get("product_handle") or not r.get("rating") or not r.get("body"):
+            continue
+        cleaned.append({**r, "_dt": dt})
 
     if product_handle:
-        filtered = [r for r in filtered if r["product_handle"] == product_handle]
+        cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
 
     results = []
 
-    for handle in set(r["product_handle"] for r in filtered):
-        product_reviews = [r for r in filtered if r["product_handle"] == handle]
+    for handle in {r["product_handle"] for r in cleaned}:
+        product_reviews = [r for r in cleaned if r["product_handle"] == handle]
 
         recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
         previous = [r for r in product_reviews if r["_dt"] < cutoff_recent]
@@ -326,15 +267,15 @@ def ratings_trends(
             else "stable"
         )
 
+        risk = "healthy"
+        action = "No action needed"
+
         if rating_delta <= -0.3 and negative_trend == "increasing":
             risk = "critical"
             action = "Immediate investigation required"
         elif rating_delta < 0:
             risk = "warning"
             action = "Monitor recent complaints"
-        else:
-            risk = "healthy"
-            action = "No action needed"
 
         results.append({
             "product_handle": handle,
