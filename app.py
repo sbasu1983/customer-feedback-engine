@@ -528,9 +528,6 @@ def ratings_summary(
         "products": results
     }
 
-# -------------------------------------------------
-# 🚨 RATINGS – ALERTS (EARLY WARNING SYSTEM)
-# -------------------------------------------------
 @app.get("/ratings/alerts")
 def ratings_alerts(
     product_handle: Optional[str] = Query(None),
@@ -542,7 +539,6 @@ def ratings_alerts(
     all_reviews = get_reviews_cached()
     now = pd.Timestamp.utcnow()
 
-    cutoff_total = now - pd.Timedelta(days=days)
     cutoff_recent = now - pd.Timedelta(days=recent_window)
 
     cleaned = []
@@ -562,16 +558,20 @@ def ratings_alerts(
     for handle in {r["product_handle"] for r in cleaned}:
         product_reviews = [r for r in cleaned if r["product_handle"] == handle]
 
-        historical = [r for r in product_reviews if r["_dt"] < cutoff_recent]
         recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
+        historical = [r for r in product_reviews if r["_dt"] < cutoff_recent]
 
-        # 🔧 FIX: fallback when historical data is missing
+        # 🔧 FIX 1: Never skip product due to missing recent data
         if not recent:
-            continue
+            recent = product_reviews[-5:]
 
+        # 🔧 FIX 2: Never allow empty historical baseline
         if not historical:
-            historical = product_reviews[:-len(recent)] or product_reviews[:5]
+            historical = product_reviews[:5]
 
+        # 🔧 FIX 3: Absolute safety
+        if not recent or not historical:
+            continue
 
         hist_summary = summarize_reviews(historical)
         recent_summary = summarize_reviews(recent)
