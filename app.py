@@ -357,7 +357,10 @@ def ratings_trends(
 def ratings_actions(
     product_handle: Optional[str] = Query(None),
     days: int = Query(30),
-    recent_window: int = Query(7)
+    recent_window: int = Query(7),
+    priority: Optional[str] = Query(None),          # 🔹 UPDATED: filter by priority
+    min_rating: Optional[float] = Query(None),      # 🔹 UPDATED: filter by minimum rating
+    max_rating: Optional[float] = Query(None)       # 🔹 UPDATED: filter by maximum rating
 ):
     all_reviews = get_reviews_cached()
     now = pd.Timestamp.utcnow()
@@ -425,6 +428,13 @@ def ratings_actions(
             "recommended_action": action
         })
 
+    if priority:
+        results = [r for r in results if r["priority"] == priority.lower()]
+    if min_rating is not None:
+        results = [r for r in results if r["average_rating"] >= min_rating]
+    if max_rating is not None:
+        results = [r for r in results if r["average_rating"] <= max_rating]
+    
     return {
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "analysis_window_days": days,
