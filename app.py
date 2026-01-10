@@ -378,10 +378,6 @@ def ratings_actions(
         rating = r.get("rating") if r.get("rating") is not None else 0
         body = r.get("body") or ""
 
-        # 🔹 Only include reviews within the total window
-        if not (cutoff_total <= dt <= now):
-            continue
-
         cleaned.append({**r, "_dt": dt, "product_handle": handle, "rating": rating, "body": body})
 
     # 🔹 Filter by specific product_handle if provided
