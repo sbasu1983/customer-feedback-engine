@@ -565,8 +565,13 @@ def ratings_alerts(
         historical = [r for r in product_reviews if r["_dt"] < cutoff_recent]
         recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
 
-        if not recent or not historical:
+        # 🔧 FIX: fallback when historical data is missing
+        if not recent:
             continue
+
+        if not historical:
+            historical = product_reviews[:-len(recent)] or product_reviews[:5]
+
 
         hist_summary = summarize_reviews(historical)
         recent_summary = summarize_reviews(recent)
