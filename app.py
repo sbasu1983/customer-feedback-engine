@@ -340,3 +340,102 @@ def ratings_trends(
         "recent_window_days": window,
         "products": results
     }
+# -------------------------------------------------
+# 🧠 RATINGS – ACTION RECOMMENDATIONS
+# -------------------------------------------------
+@app.get("/ratings/actions")
+def ratings_actions(
+    product_handle: Optional[str] = Query(None),
+    days: int = Query(30),
+    recent_window: int = Query(7)
+):
+    reviews = get_reviews_cached()
+    now = pd.Timestamp.utcnow()
+
+    cutoff_total = now - pd.Timedelta(days=days)
+    cutoff_recent = now - pd.Timedelta(days=recent_window)
+
+    cleaned = []
+
+    for r in reviews:
+        dt = safe_review_datetime(r.get("created_at"))
+        if dt is None or pd.isna(dt):
+            continue
+        if not (cutoff_total <= dt <= now):
+            continue
+        if not r.get("product_handle") or not r.get("rating") or not r.get("body"):
+            continue
+
+        cleaned.append({**r, "_dt": dt})
+
+    if product_handle:
+        cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
+
+    actions = []
+
+    for handle in {r["product_handle"] for r in cleaned}:
+        product_reviews = [r for r in cleaned if r["product_handle"] == handle]
+
+        recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
+        previous = [r for r in product_reviews if r["_dt"] < cutoff_recent]
+
+        if not recent:
+            continue
+
+        recent_avg = round(sum(r["rating"] for r in recent) / len(recent), 2)
+        prev_avg = (
+            round(sum(r["rating"] for r in previous) / len(previous), 2)
+            if previous else recent_avg
+        )
+
+        rating_delta = round(recent_avg - prev_avg, 2)
+
+        negative_reviews = [
+            r for r in recent
+            if analyze_sentiment(r["body"]) == "Negative"
+        ]
+
+        negative_pct = round(len(negative_reviews) / len(recent) * 100, 2)
+
+        complaint_themes = extract_themes(negative_reviews, COMPLAINT_KEYWORDS)
+
+        # -------------------------
+        # ACTION LOGIC
+        # -------------------------
+        if rating_delta <= -0.4 and negative_pct >= 30:
+            priority = "critical"
+            action = "Pause ads, investigate defects, respond to reviews immediately"
+        elif rating_delta <= -0.2:
+            priority = "high"
+            action = "Investigate recent complaints and adjust listing or logistics"
+        elif negative_pct >= 20:
+            priority = "medium"
+            action = "Respond to negative reviews and monitor product feedback"
+        else:
+            priority = "low"
+            action = "No immediate action needed"
+
+        actions.append({
+            "product_handle": handle,
+            "recent_avg_rating": recent_avg,
+            "previous_avg_rating": prev_avg,
+            "rating_delta": rating_delta,
+            "negative_review_pct": negative_pct,
+            "top_complaints": list(complaint_themes.keys())[:3],
+            "priority": priority,
+            "recommended_action": action
+        })
+
+    actions.sort(
+        key=lambda x: (
+            {"critical": 0, "high": 1, "medium": 2, "low": 3}[x["priority"]],
+            x["rating_delta"]
+        )
+    )
+
+    return {
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "analysis_window_days": days,
+        "recent_window_days": recent_window,
+        "products": actions
+    }
