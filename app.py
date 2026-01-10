@@ -353,11 +353,16 @@ def ratings_trends(
 # -------------------------------------------------
 # 🚨 RATINGS – ACTIONABLE INSIGHTS (FIXED)
 # -------------------------------------------------
+
 @app.get("/ratings/actions")
 def ratings_actions(
     product_handle: Optional[str] = Query(None),
     days: int = Query(30),
-    recent_window: int = Query(7)
+    recent_window: int = Query(7),
+    high_rating: float = Query(3.0),
+    high_negative_pct: float = Query(40.0),
+    medium_rating: float = Query(4.0),
+    medium_negative_pct: float = Query(25.0)
 ):
     all_reviews = get_reviews_cached()
     now = pd.Timestamp.utcnow()
@@ -366,41 +371,38 @@ def ratings_actions(
     cutoff_recent = now - pd.Timedelta(days=recent_window)
 
     cleaned = []
-
     for r in all_reviews:
         dt = safe_review_datetime(r.get("created_at"))
         if dt is None or pd.isna(dt):
             continue
-        if not r.get("product_handle") or not r.get("rating") or not r.get("body"):
+        if not (cutoff_total <= dt <= now):
             continue
-
+        if not r.get("product_handle") or r.get("rating") is None or not r.get("body"):
+            continue
         cleaned.append({**r, "_dt": dt})
 
     if product_handle:
         cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
 
     results = []
-
     for handle in {r["product_handle"] for r in cleaned}:
         product_reviews = [r for r in cleaned if r["product_handle"] == handle]
 
         recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
-
-        # 🔧 FIX 1: Fallback if no recent reviews
         if not recent:
             recent = product_reviews[-5:] if product_reviews else []
-
+        if not recent:
+            continue
 
         summary = summarize_reviews(recent)
-
-        negative_pct = summary["negative_pct"]
         avg_rating = summary["average_rating"]
+        negative_pct = summary["negative_pct"]
 
-        # 🔧 FIX 2: More realistic action logic
-        if avg_rating <= 3.0 or negative_pct >= 40:
+        # Action logic using query parameters
+        if avg_rating <= high_rating or negative_pct >= high_negative_pct:
             priority = "high"
             action = "Investigate recurring customer complaints immediately"
-        elif avg_rating < 4.0 or negative_pct >= 25:
+        elif avg_rating < medium_rating or negative_pct >= medium_negative_pct:
             priority = "medium"
             action = "Monitor feedback and address emerging issues"
         else:
