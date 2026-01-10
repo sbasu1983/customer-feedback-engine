@@ -528,3 +528,77 @@ def ratings_summary(
         "products": results
     }
 
+# -------------------------------------------------
+# 🚨 RATINGS – ALERTS (EARLY WARNING SYSTEM)
+# -------------------------------------------------
+@app.get("/ratings/alerts")
+def ratings_alerts(
+    product_handle: Optional[str] = Query(None),
+    days: int = Query(30),
+    recent_window: int = Query(7),
+    rating_drop: float = Query(0.5),
+    negative_spike: float = Query(20.0)
+):
+    all_reviews = get_reviews_cached()
+    now = pd.Timestamp.utcnow()
+
+    cutoff_total = now - pd.Timedelta(days=days)
+    cutoff_recent = now - pd.Timedelta(days=recent_window)
+
+    cleaned = []
+    for r in all_reviews:
+        dt = safe_review_datetime(r.get("created_at"))
+        if dt is None or pd.isna(dt):
+            continue
+        if not r.get("product_handle") or not r.get("rating") or not r.get("body"):
+            continue
+        cleaned.append({**r, "_dt": dt})
+
+    if product_handle:
+        cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
+
+    results = []
+
+    for handle in {r["product_handle"] for r in cleaned}:
+        product_reviews = [r for r in cleaned if r["product_handle"] == handle]
+
+        historical = [r for r in product_reviews if r["_dt"] < cutoff_recent]
+        recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
+
+        if not recent or not historical:
+            continue
+
+        hist_summary = summarize_reviews(historical)
+        recent_summary = summarize_reviews(recent)
+
+        rating_diff = hist_summary["average_rating"] - recent_summary["average_rating"]
+        negative_diff = recent_summary["negative_pct"] - hist_summary["negative_pct"]
+
+        alerts = []
+
+        if rating_diff >= rating_drop:
+            alerts.append("Average rating dropping")
+
+        if negative_diff >= negative_spike:
+            alerts.append("Spike in negative reviews")
+
+        if recent_summary["average_rating"] <= 3.0:
+            alerts.append("Critically low recent rating")
+
+        if alerts:
+            results.append({
+                "product_handle": handle,
+                "historical_avg_rating": hist_summary["average_rating"],
+                "recent_avg_rating": recent_summary["average_rating"],
+                "rating_drop": round(rating_diff, 2),
+                "negative_pct_change": round(negative_diff, 2),
+                "alerts": alerts,
+                "severity": "high" if len(alerts) >= 2 else "medium"
+            })
+
+    return {
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "analysis_window_days": days,
+        "recent_window_days": recent_window,
+        "products": results
+    }
