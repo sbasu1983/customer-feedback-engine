@@ -459,11 +459,8 @@ def ratings_summary(
     now = pd.Timestamp.utcnow()
     cutoff_total = now - pd.Timedelta(days=days)
     
-    # 🔹 If recent_window is provided, calculate its cutoff
-    if recent_window is not None:
-        cutoff_recent = now - pd.Timedelta(days=recent_window)
-    else:
-        cutoff_recent = None
+    # recent_window cutoff for optional filtering only
+    cutoff_recent = now - pd.Timedelta(days=recent_window) if recent_window else None
 
     cleaned = []
 
