@@ -340,8 +340,10 @@ def ratings_trends(
         "recent_window_days": window,
         "products": results
     }
+
+
 # -------------------------------------------------
-# 🧠 RATINGS – ACTION RECOMMENDATIONS
+# 🚨 RATINGS – ACTIONABLE INSIGHTS (FIXED)
 # -------------------------------------------------
 @app.get("/ratings/actions")
 def ratings_actions(
@@ -349,7 +351,7 @@ def ratings_actions(
     days: int = Query(30),
     recent_window: int = Query(7)
 ):
-    reviews = get_reviews_cached()
+    all_reviews = get_reviews_cached()
     now = pd.Timestamp.utcnow()
 
     cutoff_total = now - pd.Timedelta(days=days)
@@ -357,7 +359,7 @@ def ratings_actions(
 
     cleaned = []
 
-    for r in reviews:
+    for r in all_reviews:
         dt = safe_review_datetime(r.get("created_at"))
         if dt is None or pd.isna(dt):
             continue
@@ -371,71 +373,47 @@ def ratings_actions(
     if product_handle:
         cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
 
-    actions = []
+    results = []
 
     for handle in {r["product_handle"] for r in cleaned}:
         product_reviews = [r for r in cleaned if r["product_handle"] == handle]
 
         recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
-        previous = [r for r in product_reviews if r["_dt"] < cutoff_recent]
+
+        # 🔧 FIX 1: Fallback if no recent reviews
+        if not recent:
+            recent = product_reviews[-5:] if product_reviews else []
 
         if not recent:
             continue
 
-        recent_avg = round(sum(r["rating"] for r in recent) / len(recent), 2)
-        prev_avg = (
-            round(sum(r["rating"] for r in previous) / len(previous), 2)
-            if previous else recent_avg
-        )
+        summary = summarize_reviews(recent)
 
-        rating_delta = round(recent_avg - prev_avg, 2)
+        negative_pct = summary["negative_pct"]
+        avg_rating = summary["average_rating"]
 
-        negative_reviews = [
-            r for r in recent
-            if analyze_sentiment(r["body"]) == "Negative"
-        ]
-
-        negative_pct = round(len(negative_reviews) / len(recent) * 100, 2)
-
-        complaint_themes = extract_themes(negative_reviews, COMPLAINT_KEYWORDS)
-
-        # -------------------------
-        # ACTION LOGIC
-        # -------------------------
-        if rating_delta <= -0.4 and negative_pct >= 30:
-            priority = "critical"
-            action = "Pause ads, investigate defects, respond to reviews immediately"
-        elif rating_delta <= -0.2:
+        # 🔧 FIX 2: More realistic action logic
+        if avg_rating <= 3.0 or negative_pct >= 40:
             priority = "high"
-            action = "Investigate recent complaints and adjust listing or logistics"
-        elif negative_pct >= 20:
+            action = "Investigate recurring customer complaints immediately"
+        elif avg_rating < 4.0 or negative_pct >= 25:
             priority = "medium"
-            action = "Respond to negative reviews and monitor product feedback"
+            action = "Monitor feedback and address emerging issues"
         else:
             priority = "low"
             action = "No immediate action needed"
 
-        actions.append({
+        results.append({
             "product_handle": handle,
-            "recent_avg_rating": recent_avg,
-            "previous_avg_rating": prev_avg,
-            "rating_delta": rating_delta,
-            "negative_review_pct": negative_pct,
-            "top_complaints": list(complaint_themes.keys())[:3],
+            "average_rating": avg_rating,
+            "negative_pct": negative_pct,
             "priority": priority,
             "recommended_action": action
         })
-
-    actions.sort(
-        key=lambda x: (
-            {"critical": 0, "high": 1, "medium": 2, "low": 3}[x["priority"]],
-            x["rating_delta"]
-        )
-    )
 
     return {
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "analysis_window_days": days,
         "recent_window_days": recent_window,
-        "products": actions
+        "products": results
     }
