@@ -312,9 +312,17 @@ def ratings_trends(
         recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
         previous = [r for r in product_reviews if r["_dt"] < cutoff_recent]
 
+
         if not recent or not previous:
+            results.append({
+                "product_handle": handle,
+                "status": "insufficient_data",
+                "reason": "Not enough review history to detect trends",
+                "recommended_action": "Collect more customer feedback"
+            })
             continue
 
+        
         recent_avg = round(sum(r["rating"] for r in recent) / len(recent), 2)
         prev_avg = round(sum(r["rating"] for r in previous) / len(previous), 2)
         delta = round(recent_avg - prev_avg, 2)
