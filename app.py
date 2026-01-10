@@ -5,6 +5,7 @@ from textblob import TextBlob
 import os
 import time
 from threading import Lock
+from datetime import datetime, timedelta
 import hmac
 import hashlib
 import base64
@@ -20,7 +21,7 @@ app = FastAPI(title="Customer Feedback Insights API")
 # -------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # later replace "*" with your Wix domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -94,13 +95,6 @@ COMPLAINT_KEYWORDS = {
     "size_fit": ["size", "fit", "small", "large", "tight"],
     "packaging": ["packaging", "box", "packed"],
     "support": ["support", "customer service", "help"]
-}
-
-PRAISE_KEYWORDS = {
-    "quality": ["good quality", "excellent", "durable", "well made"],
-    "delivery": ["fast delivery", "quick shipping", "on time"],
-    "price": ["affordable", "cheap", "worth it"],
-    "fit": ["perfect fit", "comfortable", "nice fit"]
 }
 
 def extract_themes(reviews, keywords_map):
@@ -237,10 +231,7 @@ def ratings(product_handle: str = Query(...)):
 # ⭐ RATINGS – AT-RISK PRODUCTS
 # -------------------------------------------------
 @app.get("/ratings/at-risk")
-def ratings_at_risk(threshold: float = Query(0.6, description="Weighted risk score threshold, 0-1")):
-    """
-    Returns products flagged as at-risk based on weighted risk score or negative sentiment.
-    """
+def ratings_at_risk(threshold: float = Query(0.6)):
     product_handles = get_product_handles_cached()
     all_reviews = get_reviews_cached()
 
@@ -253,27 +244,110 @@ def ratings_at_risk(threshold: float = Query(0.6, description="Weighted risk sco
 
         summary = summarize_reviews(product_reviews)
         weighted_risk_score = round(
-            ((1 - summary["average_rating"]/5) * 0.7) + (summary["negative_pct"]/100 * 0.3), 2
+            ((1 - summary["average_rating"] / 5) * 0.7) +
+            (summary["negative_pct"] / 100 * 0.3), 2
         )
 
         if weighted_risk_score >= threshold:
-            # Top complaints
-            negative_reviews = [{"review": r["body"]} for r in product_reviews if analyze_sentiment(r["body"]) == "Negative"]
-            top_complaints = list(extract_themes(negative_reviews, COMPLAINT_KEYWORDS).keys())
+            negative_reviews = [
+                {"review": r["body"]}
+                for r in product_reviews
+                if analyze_sentiment(r["body"]) == "Negative"
+            ]
 
             at_risk_products.append({
                 "product_handle": handle,
                 "average_rating": summary["average_rating"],
                 "negative_pct": summary["negative_pct"],
                 "weighted_risk_score": weighted_risk_score,
-                "top_complaints": top_complaints
+                "top_complaints": list(extract_themes(negative_reviews, COMPLAINT_KEYWORDS).keys())
             })
 
-    # Sort by risk descending
     at_risk_products.sort(key=lambda x: x["weighted_risk_score"], reverse=True)
 
     return {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "total_products_scanned": len(product_handles),
         "at_risk_products": at_risk_products
+    }
+
+# -------------------------------------------------
+# 📈 RATINGS – TRENDS
+# -------------------------------------------------
+@app.get("/ratings/trends")
+def ratings_trends(
+    product_handle: str | None = Query(None),
+    days: int = Query(30),
+    window: int = Query(7)
+):
+    all_reviews = get_reviews_cached()
+    now = datetime.utcnow()
+
+    def parse_date(val):
+        try:
+            return datetime.fromisoformat(val.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    cutoff_recent = now - timedelta(days=window)
+    cutoff_total = now - timedelta(days=days)
+
+    filtered = []
+    for r in all_reviews:
+        dt = parse_date(r.get("created_at", ""))
+        if dt and cutoff_total <= dt <= now:
+            filtered.append({**r, "_dt": dt})
+
+    if product_handle:
+        filtered = [r for r in filtered if r["product_handle"] == product_handle]
+
+    results = []
+
+    for handle in set(r["product_handle"] for r in filtered):
+        product_reviews = [r for r in filtered if r["product_handle"] == handle]
+
+        recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
+        previous = [r for r in product_reviews if r["_dt"] < cutoff_recent]
+
+        if not recent or not previous:
+            continue
+
+        recent_summary = summarize_reviews(recent)
+        previous_summary = summarize_reviews(previous)
+
+        rating_delta = round(
+            recent_summary["average_rating"] - previous_summary["average_rating"], 2
+        )
+
+        negative_trend = (
+            "increasing"
+            if recent_summary["negative_pct"] > previous_summary["negative_pct"]
+            else "stable"
+        )
+
+        if rating_delta <= -0.3 and negative_trend == "increasing":
+            risk = "critical"
+            action = "Immediate investigation required"
+        elif rating_delta < 0:
+            risk = "warning"
+            action = "Monitor recent complaints"
+        else:
+            risk = "healthy"
+            action = "No action needed"
+
+        results.append({
+            "product_handle": handle,
+            "current_avg_rating": recent_summary["average_rating"],
+            "previous_avg_rating": previous_summary["average_rating"],
+            "rating_delta": rating_delta,
+            "negative_review_trend": negative_trend,
+            "risk_level": risk,
+            "recommended_action": action
+        })
+
+    return {
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "analysis_window_days": days,
+        "recent_window_days": window,
+        "products": results
     }
