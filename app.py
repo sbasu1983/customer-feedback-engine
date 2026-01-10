@@ -392,8 +392,6 @@ def ratings_actions(
         if not recent:
             recent = product_reviews[-5:] if product_reviews else []
 
-        if not recent:
-            continue
 
         summary = summarize_reviews(recent)
 
