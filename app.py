@@ -441,3 +441,85 @@ def ratings_actions(
         "recent_window_days": recent_window,
         "products": results
     }
+
+# -------------------------------------------------
+# 📊 RATINGS – SUMMARY (WITH RECENT WINDOW & FILTERS)
+# -------------------------------------------------
+@app.get("/ratings/summary")
+def ratings_summary(
+    product_handle: Optional[str] = Query(None),
+    days: int = Query(30),
+    recent_window: Optional[int] = Query(None),       # 🔹 NEW: Only consider reviews from the last N days
+    min_avg_rating: Optional[float] = Query(None),
+    max_avg_rating: Optional[float] = Query(None),
+    min_negative_pct: Optional[float] = Query(None),
+    max_negative_pct: Optional[float] = Query(None)
+):
+    all_reviews = get_reviews_cached()
+    now = pd.Timestamp.utcnow()
+    cutoff_total = now - pd.Timedelta(days=days)
+    
+    # 🔹 If recent_window is provided, calculate its cutoff
+    if recent_window is not None:
+        cutoff_recent = now - pd.Timedelta(days=recent_window)
+    else:
+        cutoff_recent = None
+
+    cleaned = []
+
+    for r in all_reviews:
+        dt = safe_review_datetime(r.get("created_at"))
+        if dt is None or pd.isna(dt):
+            continue
+        # 🔹 Apply total days cutoff
+        if dt < cutoff_total:
+            continue
+        # 🔹 If recent_window is set, skip reviews older than recent_window
+        if cutoff_recent is not None and dt < cutoff_recent:
+            continue
+        if not r.get("product_handle") or not r.get("rating") or not r.get("body"):
+            continue
+        cleaned.append({**r, "_dt": dt})
+
+    # 🔹 Filter by product_handle if provided
+    if product_handle:
+        cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
+
+    results = []
+
+    for handle in {r["product_handle"] for r in cleaned}:
+        product_reviews = [r for r in cleaned if r["product_handle"] == handle]
+        summary = summarize_reviews(product_reviews)
+
+        negative_reviews = [
+            {"review": r["body"]}
+            for r in product_reviews
+            if analyze_sentiment(r["body"]) == "Negative"
+        ]
+
+        # 🔹 Apply dynamic filters
+        if min_avg_rating is not None and summary["average_rating"] < min_avg_rating:
+            continue
+        if max_avg_rating is not None and summary["average_rating"] > max_avg_rating:
+            continue
+        if min_negative_pct is not None and summary["negative_pct"] < min_negative_pct:
+            continue
+        if max_negative_pct is not None and summary["negative_pct"] > max_negative_pct:
+            continue
+
+        results.append({
+            "product_handle": handle,
+            "total_reviews": summary["total_reviews"],
+            "average_rating": summary["average_rating"],
+            "positive_pct": summary["positive_pct"],
+            "negative_pct": summary["negative_pct"],
+            "neutral_pct": summary["neutral_pct"],
+            "top_complaints": list(extract_themes(negative_reviews, COMPLAINT_KEYWORDS).keys())
+        })
+
+    return {
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "analysis_window_days": days,
+        "recent_window_days": recent_window if recent_window else "all",
+        "products": results
+    }
