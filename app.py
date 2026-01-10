@@ -20,7 +20,7 @@ app = FastAPI(title="Customer Feedback Insights API")
 # -------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # later replace "*" with your Wix domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -231,4 +231,49 @@ def ratings(product_handle: str = Query(...)):
         "product_handle": product_handle,
         "summary": summarize_reviews(product_reviews),
         "reviews": product_reviews
+    }
+
+# -------------------------------------------------
+# ⭐ RATINGS – AT-RISK PRODUCTS
+# -------------------------------------------------
+@app.get("/ratings/at-risk")
+def ratings_at_risk(threshold: float = Query(0.6, description="Weighted risk score threshold, 0-1")):
+    """
+    Returns products flagged as at-risk based on weighted risk score or negative sentiment.
+    """
+    product_handles = get_product_handles_cached()
+    all_reviews = get_reviews_cached()
+
+    at_risk_products = []
+
+    for handle in product_handles:
+        product_reviews = [r for r in all_reviews if r.get("product_handle") == handle]
+        if not product_reviews:
+            continue
+
+        summary = summarize_reviews(product_reviews)
+        weighted_risk_score = round(
+            ((1 - summary["average_rating"]/5) * 0.7) + (summary["negative_pct"]/100 * 0.3), 2
+        )
+
+        if weighted_risk_score >= threshold:
+            # Top complaints
+            negative_reviews = [r for r in product_reviews if analyze_sentiment(r["body"]) == "Negative"]
+            top_complaints = list(extract_themes(negative_reviews, COMPLAINT_KEYWORDS).keys())
+
+            at_risk_products.append({
+                "product_handle": handle,
+                "average_rating": summary["average_rating"],
+                "negative_pct": summary["negative_pct"],
+                "weighted_risk_score": weighted_risk_score,
+                "top_complaints": top_complaints
+            })
+
+    # Sort by risk descending
+    at_risk_products.sort(key=lambda x: x["weighted_risk_score"], reverse=True)
+
+    return {
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "total_products_scanned": len(product_handles),
+        "at_risk_products": at_risk_products
     }
