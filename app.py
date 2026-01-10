@@ -276,7 +276,7 @@ def ratings_at_risk(threshold: float = Query(0.6)):
 # -------------------------------------------------
 @app.get("/ratings/trends")
 def ratings_trends(
-    product_handle: str | None = Query(None),
+    product_handle: Optional[str] = Query(None),
     days: int = Query(30),
     window: int = Query(7)
 ):
