@@ -443,13 +443,13 @@ def ratings_actions(
     }
 
 # -------------------------------------------------
-# 📊 RATINGS – SUMMARY (WITH RECENT WINDOW & FILTERS)
+# 📊 RATINGS – SUMMARY (FIXED)
 # -------------------------------------------------
 @app.get("/ratings/summary")
 def ratings_summary(
     product_handle: Optional[str] = Query(None),
     days: int = Query(30),
-    recent_window: Optional[int] = Query(None),       # 🔹 NEW: Only consider reviews from the last N days
+    recent_window: Optional[int] = Query(None),
     min_avg_rating: Optional[float] = Query(None),
     max_avg_rating: Optional[float] = Query(None),
     min_negative_pct: Optional[float] = Query(None),
@@ -457,44 +457,51 @@ def ratings_summary(
 ):
     all_reviews = get_reviews_cached()
     now = pd.Timestamp.utcnow()
+
+    # Optional cutoffs for summarization only
     cutoff_total = now - pd.Timedelta(days=days)
-    
-    # recent_window cutoff for optional filtering only
     cutoff_recent = now - pd.Timedelta(days=recent_window) if recent_window else None
 
+    # keep all reviews, do not filter out older ones yet
     cleaned = []
-
     for r in all_reviews:
         dt = safe_review_datetime(r.get("created_at"))
         if dt is None or pd.isna(dt):
-            continue
-        # 🔹 Apply total days cutoff
-        if dt < cutoff_total:
-            continue
-        # 🔹 If recent_window is set, skip reviews older than recent_window
-        if cutoff_recent is not None and dt < cutoff_recent:
             continue
         if not r.get("product_handle") or not r.get("rating") or not r.get("body"):
             continue
         cleaned.append({**r, "_dt": dt})
 
-    # 🔹 Filter by product_handle if provided
+    # filter by product_handle if provided
     if product_handle:
         cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
 
+    # find unique products
+    product_handles = {r["product_handle"] for r in cleaned}
     results = []
 
-    for handle in {r["product_handle"] for r in cleaned}:
+    for handle in product_handles:
         product_reviews = [r for r in cleaned if r["product_handle"] == handle]
-        summary = summarize_reviews(product_reviews)
+
+        # apply cutoffs only for summarization
+        reviews_to_summarize = []
+        for r in product_reviews:
+            if recent_window and r["_dt"] < cutoff_recent:
+                continue
+            reviews_to_summarize.append(r)
+        if not reviews_to_summarize:
+            # fallback to all reviews if recent_window removed everything
+            reviews_to_summarize = product_reviews
+
+        summary = summarize_reviews(reviews_to_summarize)
 
         negative_reviews = [
             {"review": r["body"]}
-            for r in product_reviews
+            for r in reviews_to_summarize
             if analyze_sentiment(r["body"]) == "Negative"
         ]
 
-        # 🔹 Apply dynamic filters
+        # Apply optional filters
         if min_avg_rating is not None and summary["average_rating"] < min_avg_rating:
             continue
         if max_avg_rating is not None and summary["average_rating"] > max_avg_rating:
@@ -520,3 +527,4 @@ def ratings_summary(
         "recent_window_days": recent_window if recent_window else "all",
         "products": results
     }
+
