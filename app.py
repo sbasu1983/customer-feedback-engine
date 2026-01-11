@@ -685,14 +685,22 @@ def ratings_themes(
     reviews = []
 
     for r in all_reviews:
+        # 🔧 FIX: do NOT drop reviews if created_at is missing
         dt = safe_review_datetime(r.get("created_at"))
-        if dt is None or pd.isna(dt) or dt < cutoff:
+        if dt is not None and not pd.isna(dt) and dt < cutoff:
             continue
 
         handle = resolve_product_handle(r)
-        body = r.get("body")
 
-        if not body:
+        body = (
+            r.get("body")
+            or r.get("review")
+            or r.get("body_html")
+            or r.get("title")
+            or ""
+        )
+
+        if not body.strip():
             continue
 
         if product_handle != "all" and handle != product_handle:
@@ -710,5 +718,4 @@ def ratings_themes(
         "negative_themes": extract_themes(reviews, COMPLAINT_KEYWORDS),
         "positive_themes": extract_themes(reviews, PRAISE_KEYWORDS)
     }
-
 
