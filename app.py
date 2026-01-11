@@ -3,6 +3,7 @@ from typing import Optional
 import requests
 import pandas as pd
 from textblob import TextBlob
+from collections import Counter
 import os
 import re
 import time
@@ -712,4 +713,40 @@ def ratings_themes(
         "positive_themes": extract_themes(reviews, PRAISE_KEYWORDS)
     }
 
+@app.get("/ratings/insights")
+def get_insights(product_handle: str = "all"):
+    all_reviews = fetch_all_reviews(product_handle)
 
+    complaints = Counter()
+    praises = Counter()
+
+    for r in all_reviews:
+        text = (
+            r.get("review", "")
+            or r.get("body", "")
+            or r.get("comment", "")
+        ).strip()
+
+        if not text:
+            continue
+
+        blob = TextBlob(text)
+        polarity = blob.sentiment.polarity
+
+        # extract short phrases (noun phrases work best here)
+        phrases = [p.lower() for p in blob.noun_phrases]
+
+        if polarity < -0.1:
+            for p in phrases:
+                complaints[p] += 1
+
+        elif polarity > 0.1:
+            for p in phrases:
+                praises[p] += 1
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "product_handle": product_handle,
+        "top_complaints": [p for p, _ in complaints.most_common(3)],
+        "top_praises": [p for p, _ in praises.most_common(3)],
+    }
