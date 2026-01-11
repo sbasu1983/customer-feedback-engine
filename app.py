@@ -105,7 +105,19 @@ COMPLAINT_KEYWORDS = {
     "support": ["support", "customer service"]
 }
 
-def extract_themes(reviews, keywords_map):
+# -------------------------------------------------
+# PRAISE THEMES
+# -------------------------------------------------
+PRAISE_KEYWORDS = {
+    "quality": ["quality", "durable", "well made", "excellent"],
+    "delivery": ["fast", "quick", "on time"],
+    "price": ["cheap", "value", "worth", "affordable"],
+    "fit": ["perfect", "fit", "comfortable"],
+    "support": ["support", "helpful", "responsive"]
+}
+
+
+    def extract_themes(reviews, keywords_map):
     themes = {}
     for r in reviews:
         text = r.get("body", "").lower()
@@ -636,7 +648,7 @@ def ratings_alerts(
     }
 
 # -------------------------------------------------
-# 📌 RATINGS – THEMES
+# 📌 RATINGS – THEMES (FIXED & SAFE)
 # -------------------------------------------------
 @app.get("/ratings/themes")
 def ratings_themes(
@@ -646,56 +658,52 @@ def ratings_themes(
 ):
     all_reviews = get_reviews_cached()
 
-    # Filter by product_handle if provided
-    if product_handle:
-        filtered = [
-            r for r in all_reviews
-            if (r.get("product_handle") == product_handle
-                and r.get("body") and r.get("rating") is not None)
-        ]
-    else:
-        filtered = [
-            r for r in all_reviews
-            if r.get("body") and r.get("rating") is not None
-        ]
+    filtered = []
+    for r in all_reviews:
+        handle = resolve_product_handle(r)
+        body = r.get("body")
 
-    # Extract negative and positive sets
+        if not body:
+            continue
+        if product_handle and handle != product_handle:
+            continue
+
+        filtered.append({
+            "body": body,
+            "sentiment": analyze_sentiment(body)
+        })
+
+    # Split by sentiment
     negative_reviews = [
         {"review": r["body"]}
-        for r in filtered
-        if analyze_sentiment(r["body"]) == "Negative"
-    ]
-    positive_reviews = [
-        {"review": r["body"]}
-        for r in filtered
-        if analyze_sentiment(r["body"]) == "Positive"
+        for r in filtered if r["sentiment"] == "Negative"
     ]
 
-    # Get themes with counts
+    positive_reviews = [
+        {"review": r["body"]}
+        for r in filtered if r["sentiment"] == "Positive"
+    ]
+
+    # Extract themes
     negative_themes = extract_themes(negative_reviews, COMPLAINT_KEYWORDS)
     positive_themes = extract_themes(positive_reviews, PRAISE_KEYWORDS)
 
-    # Filter for minimum occurrences
-    neg_filtered = {
-        k: v for k, v in negative_themes.items()
-        if v >= min_occurrences
-    }
-    pos_filtered = {
-        k: v for k, v in positive_themes.items()
-        if v >= min_occurrences
-    }
-
-    # Sort and limit
+    # Filter + sort
     neg_sorted = sorted(
-        neg_filtered.items(), key=lambda item: item[1], reverse=True
+        [(k, v) for k, v in negative_themes.items() if v >= min_occurrences],
+        key=lambda x: x[1],
+        reverse=True
     )[:limit]
+
     pos_sorted = sorted(
-        pos_filtered.items(), key=lambda item: item[1], reverse=True
+        [(k, v) for k, v in positive_themes.items() if v >= min_occurrences],
+        key=lambda x: x[1],
+        reverse=True
     )[:limit]
 
     return {
         "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "product_handle": product_handle,
+        "product_handle": product_handle or "all",
         "negative_themes": [
             {"theme": k, "count": v} for k, v in neg_sorted
         ],
@@ -703,3 +711,4 @@ def ratings_themes(
             {"theme": k, "count": v} for k, v in pos_sorted
         ]
     }
+
