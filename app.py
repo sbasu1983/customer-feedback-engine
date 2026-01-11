@@ -689,6 +689,10 @@ def ratings_themes(
             negative_reviews.append(review_obj)
         elif sentiment == "Positive":
             positive_reviews.append(review_obj)
+        else:
+            # 🔧 NEW: Neutral reviews still contain complaint & praise signals
+            negative_reviews.append(review_obj)
+            positive_reviews.append(review_obj)
 
     return {
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
