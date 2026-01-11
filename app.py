@@ -667,27 +667,6 @@ def ratings_alerts(
 # -------------------------------------------------
 # 🚨 RATINGS – THEMES (FIXED)
 # -------------------------------------------------
-def extract_themes(reviews, keywords_map):
-    themes = {}
-
-    for r in reviews:
-        # 🔹 Ensure string, lowercase, and remove punctuation
-        text = str(r.get("body", "")).lower()
-        if not text:
-            continue
-        for p in ".,!?;:()[]{}\"'":
-            text = text.replace(p, " ")
-
-        words = text.split()  # 🔹 Split text into words for exact keyword match
-
-        for theme, keywords in keywords_map.items():
-            for k in keywords:
-                if k.lower() in words:  # 🔹 Match keywords against normalized words
-                    themes[theme] = themes.get(theme, 0) + 1
-
-    # 🔹 Return sorted by frequency descending
-    return dict(sorted(themes.items(), key=lambda x: x[1], reverse=True))
-
 
 @app.get("/ratings/themes")
 def ratings_themes(
@@ -735,6 +714,7 @@ def ratings_themes(
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "product_handle": product_handle,
         "negative_themes": extract_themes(negative_reviews, COMPLAINT_KEYWORDS),
-        "positive_themes": extract_themes(positive_reviews, COMPLAINT_KEYWORDS)
+        "positive_themes": extract_themes(positive_reviews, PRAISE_KEYWORDS)  # 🔧 FIX
     }
+
 
