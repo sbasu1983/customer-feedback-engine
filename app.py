@@ -528,6 +528,9 @@ def ratings_summary(
         "products": results
     }
 
+# -------------------------------------------------
+# 📊 RATINGS – ALERTS (FIXED)
+# -------------------------------------------------
 @app.get("/ratings/alerts")
 def ratings_alerts(
     product_handle: Optional[str] = Query(None),
@@ -538,7 +541,6 @@ def ratings_alerts(
 ):
     all_reviews = get_reviews_cached()
     now = pd.Timestamp.utcnow()
-
     cutoff_recent = now - pd.Timedelta(days=recent_window)
 
     cleaned = []
@@ -546,9 +548,17 @@ def ratings_alerts(
         dt = safe_review_datetime(r.get("created_at"))
         if dt is None or pd.isna(dt):
             continue
-        if not r.get("product_handle") or not r.get("rating") or not r.get("body"):
+
+        handle = resolve_product_handle(r)   # 🔧 FIX
+
+        if not handle or not r.get("rating") or not r.get("body"):
             continue
-        cleaned.append({**r, "_dt": dt})
+
+        cleaned.append({
+            **r,
+            "_dt": dt,
+            "product_handle": handle
+        })
 
     if product_handle:
         cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
@@ -561,15 +571,12 @@ def ratings_alerts(
         recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
         historical = [r for r in product_reviews if r["_dt"] < cutoff_recent]
 
-        # 🔧 FIX 1: Never skip product due to missing recent data
         if not recent:
             recent = product_reviews[-5:]
 
-        # 🔧 FIX 2: Never allow empty historical baseline
         if not historical:
             historical = product_reviews[:5]
 
-        # 🔧 FIX 3: Absolute safety
         if not recent or not historical:
             continue
 
