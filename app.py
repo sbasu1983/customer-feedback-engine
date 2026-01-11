@@ -128,18 +128,23 @@ def extract_themes(reviews, keywords_map):
         if not text:
             continue
 
-        # 🔹 Replace punctuation with spaces
+        # normalize punctuation → spaces
         text = re.sub(r"[^\w\s]", " ", text)
+        text = re.sub(r"\s+", " ", text)
 
         for theme, keywords in keywords_map.items():
             for k in keywords:
-                # 🔹 Use regex word boundary to match keyword anywhere in text
-                pattern = r"\b" + re.escape(k.lower()) + r"\b"
-                matches = re.findall(pattern, text)
-                if matches:
-                    themes[theme] = themes.get(theme, 0) + len(matches)
+                k = k.lower()
 
-    # 🔹 Sort by frequency
+                # ✅ Phrase-safe matching
+                if " " in k:
+                    count = text.count(k)
+                else:
+                    count = len(re.findall(rf"\b{k}\b", text))
+
+                if count > 0:
+                    themes[theme] = themes.get(theme, 0) + count
+
     return dict(sorted(themes.items(), key=lambda x: x[1], reverse=True))
 
 
