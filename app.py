@@ -4,6 +4,7 @@ import requests
 import pandas as pd
 from textblob import TextBlob
 import os
+import re
 import time
 from threading import Lock
 from datetime import datetime
@@ -123,21 +124,24 @@ def extract_themes(reviews, keywords_map):
     themes = {}
 
     for r in reviews:
-        # ensure string & lowercase
         text = str(r.get("body", "")).lower()
         if not text:
             continue
 
-        # remove basic punctuation
-        for p in ".,!?;:":
-            text = text.replace(p, " ")
+        # 🔹 Replace punctuation with spaces
+        text = re.sub(r"[^\w\s]", " ", text)
 
         for theme, keywords in keywords_map.items():
             for k in keywords:
-                if k.lower() in text.split():  # match words only
-                    themes[theme] = themes.get(theme, 0) + 1
+                # 🔹 Use regex word boundary to match keyword anywhere in text
+                pattern = r"\b" + re.escape(k.lower()) + r"\b"
+                matches = re.findall(pattern, text)
+                if matches:
+                    themes[theme] = themes.get(theme, 0) + len(matches)
 
+    # 🔹 Sort by frequency
     return dict(sorted(themes.items(), key=lambda x: x[1], reverse=True))
+
 
 # -------------------------------------------------
 # SHOPIFY FETCH
@@ -716,17 +720,14 @@ def ratings_themes(
 
         sentiment = analyze_sentiment(body)
 
-        # 🔹 Normalize review text
-        review_obj = {
-            "body": str(body).lower()
-        }
+        review_obj = {"body": str(body).lower()}
 
         if sentiment == "Negative":
             negative_reviews.append(review_obj)
         elif sentiment == "Positive":
             positive_reviews.append(review_obj)
         else:
-            # 🔹 Neutral reviews still contribute to themes
+            # Neutral reviews still contribute
             negative_reviews.append(review_obj)
             positive_reviews.append(review_obj)
 
