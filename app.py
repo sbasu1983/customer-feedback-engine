@@ -117,7 +117,7 @@ PRAISE_KEYWORDS = {
 }
 
 
-    def extract_themes(reviews, keywords_map):
+def extract_themes(reviews, keywords_map):
     themes = {}
     for r in reviews:
         text = r.get("body", "").lower()
