@@ -648,67 +648,51 @@ def ratings_alerts(
     }
 
 # -------------------------------------------------
-# 📌 RATINGS – THEMES (FIXED & SAFE)
+# 🧩 RATINGS – THEMES (FIXED & WORKING)
 # -------------------------------------------------
 @app.get("/ratings/themes")
 def ratings_themes(
-    product_handle: Optional[str] = Query(None),
-    min_occurrences: int = Query(1),
-    limit: int = Query(10)
+    product_handle: Optional[str] = Query("all"),
+    days: int = Query(30)
 ):
     all_reviews = get_reviews_cached()
+    now = pd.Timestamp.utcnow()
+    cutoff = now - pd.Timedelta(days=days)
 
-    filtered = []
+    positive_reviews = []
+    negative_reviews = []
+
     for r in all_reviews:
+        dt = safe_review_datetime(r.get("created_at"))
+        if dt is None or pd.isna(dt):
+            continue
+        if dt < cutoff:
+            continue
+
         handle = resolve_product_handle(r)
         body = r.get("body")
+        rating = r.get("rating")
 
-        if not body:
+        if not body or rating is None:
             continue
-        if product_handle and handle != product_handle:
+
+        if product_handle != "all" and handle != product_handle:
             continue
 
-        filtered.append({
-            "body": body,
-            "sentiment": analyze_sentiment(body)
-        })
+        sentiment = analyze_sentiment(body)
 
-    # Split by sentiment
-    negative_reviews = [
-        {"review": r["body"]}
-        for r in filtered if r["sentiment"] == "Negative"
-    ]
+        review_obj = {
+            "body": body
+        }
 
-    positive_reviews = [
-        {"review": r["body"]}
-        for r in filtered if r["sentiment"] == "Positive"
-    ]
-
-    # Extract themes
-    negative_themes = extract_themes(negative_reviews, COMPLAINT_KEYWORDS)
-    positive_themes = extract_themes(positive_reviews, PRAISE_KEYWORDS)
-
-    # Filter + sort
-    neg_sorted = sorted(
-        [(k, v) for k, v in negative_themes.items() if v >= min_occurrences],
-        key=lambda x: x[1],
-        reverse=True
-    )[:limit]
-
-    pos_sorted = sorted(
-        [(k, v) for k, v in positive_themes.items() if v >= min_occurrences],
-        key=lambda x: x[1],
-        reverse=True
-    )[:limit]
+        if sentiment == "Negative":
+            negative_reviews.append(review_obj)
+        elif sentiment == "Positive":
+            positive_reviews.append(review_obj)
 
     return {
-        "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "product_handle": product_handle or "all",
-        "negative_themes": [
-            {"theme": k, "count": v} for k, v in neg_sorted
-        ],
-        "positive_themes": [
-            {"theme": k, "count": v} for k, v in pos_sorted
-        ]
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "product_handle": product_handle,
+        "negative_themes": extract_themes(negative_reviews, COMPLAINT_KEYWORDS),
+        "positive_themes": extract_themes(positive_reviews, COMPLAINT_KEYWORDS)
     }
-
