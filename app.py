@@ -634,3 +634,72 @@ def ratings_alerts(
         "recent_window_days": recent_window,
         "products": results
     }
+
+# -------------------------------------------------
+# 📌 RATINGS – THEMES
+# -------------------------------------------------
+@app.get("/ratings/themes")
+def ratings_themes(
+    product_handle: Optional[str] = Query(None),
+    min_occurrences: int = Query(1),
+    limit: int = Query(10)
+):
+    all_reviews = get_reviews_cached()
+
+    # Filter by product_handle if provided
+    if product_handle:
+        filtered = [
+            r for r in all_reviews
+            if (r.get("product_handle") == product_handle
+                and r.get("body") and r.get("rating") is not None)
+        ]
+    else:
+        filtered = [
+            r for r in all_reviews
+            if r.get("body") and r.get("rating") is not None
+        ]
+
+    # Extract negative and positive sets
+    negative_reviews = [
+        {"review": r["body"]}
+        for r in filtered
+        if analyze_sentiment(r["body"]) == "Negative"
+    ]
+    positive_reviews = [
+        {"review": r["body"]}
+        for r in filtered
+        if analyze_sentiment(r["body"]) == "Positive"
+    ]
+
+    # Get themes with counts
+    negative_themes = extract_themes(negative_reviews, COMPLAINT_KEYWORDS)
+    positive_themes = extract_themes(positive_reviews, PRAISE_KEYWORDS)
+
+    # Filter for minimum occurrences
+    neg_filtered = {
+        k: v for k, v in negative_themes.items()
+        if v >= min_occurrences
+    }
+    pos_filtered = {
+        k: v for k, v in positive_themes.items()
+        if v >= min_occurrences
+    }
+
+    # Sort and limit
+    neg_sorted = sorted(
+        neg_filtered.items(), key=lambda item: item[1], reverse=True
+    )[:limit]
+    pos_sorted = sorted(
+        pos_filtered.items(), key=lambda item: item[1], reverse=True
+    )[:limit]
+
+    return {
+        "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "product_handle": product_handle,
+        "negative_themes": [
+            {"theme": k, "count": v} for k, v in neg_sorted
+        ],
+        "positive_themes": [
+            {"theme": k, "count": v} for k, v in pos_sorted
+        ]
+    }
