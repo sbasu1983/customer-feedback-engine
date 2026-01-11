@@ -123,18 +123,21 @@ def extract_themes(reviews, keywords_map):
     themes = {}
 
     for r in reviews:
-        # 🔧 FIX: support normalized "body" input safely
-        text = r.get("body", "")
-
+        # ensure string & lowercase
+        text = str(r.get("body", "")).lower()
         if not text:
             continue
 
+        # remove basic punctuation
+        for p in ".,!?;:":
+            text = text.replace(p, " ")
+
         for theme, keywords in keywords_map.items():
-            if any(k in text for k in keywords):
-                themes[theme] = themes.get(theme, 0) + 1
+            for k in keywords:
+                if k.lower() in text.split():  # match words only
+                    themes[theme] = themes.get(theme, 0) + 1
 
     return dict(sorted(themes.items(), key=lambda x: x[1], reverse=True))
-
 
 # -------------------------------------------------
 # SHOPIFY FETCH
@@ -657,6 +660,31 @@ def ratings_alerts(
         "products": results
     }
 
+# -------------------------------------------------
+# 🚨 RATINGS – THEMES (FIXED)
+# -------------------------------------------------
+def extract_themes(reviews, keywords_map):
+    themes = {}
+
+    for r in reviews:
+        # 🔹 Ensure string, lowercase, and remove punctuation
+        text = str(r.get("body", "")).lower()
+        if not text:
+            continue
+        for p in ".,!?;:()[]{}\"'":
+            text = text.replace(p, " ")
+
+        words = text.split()  # 🔹 Split text into words for exact keyword match
+
+        for theme, keywords in keywords_map.items():
+            for k in keywords:
+                if k.lower() in words:  # 🔹 Match keywords against normalized words
+                    themes[theme] = themes.get(theme, 0) + 1
+
+    # 🔹 Return sorted by frequency descending
+    return dict(sorted(themes.items(), key=lambda x: x[1], reverse=True))
+
+
 @app.get("/ratings/themes")
 def ratings_themes(
     product_handle: Optional[str] = Query("all"),
@@ -688,9 +716,9 @@ def ratings_themes(
 
         sentiment = analyze_sentiment(body)
 
-        # 🔧 **FIX (CRITICAL): normalize review shape**
+        # 🔹 Normalize review text
         review_obj = {
-            "body": str(body).lower()   # 🔹 CHANGED: ensure text exists & is lowercase
+            "body": str(body).lower()
         }
 
         if sentiment == "Negative":
@@ -698,7 +726,7 @@ def ratings_themes(
         elif sentiment == "Positive":
             positive_reviews.append(review_obj)
         else:
-            # 🔧 Neutral reviews may still contain theme signals
+            # 🔹 Neutral reviews still contribute to themes
             negative_reviews.append(review_obj)
             positive_reviews.append(review_obj)
 
@@ -708,3 +736,4 @@ def ratings_themes(
         "negative_themes": extract_themes(negative_reviews, COMPLAINT_KEYWORDS),
         "positive_themes": extract_themes(positive_reviews, COMPLAINT_KEYWORDS)
     }
+
