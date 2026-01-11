@@ -700,6 +700,10 @@ def ratings_themes(
 
         reviews.append({"body": body})
 
+    print("TOTAL REVIEWS FETCHED:", len(all_reviews))
+    print("REVIEWS AFTER FILTERING:", len(reviews))
+    print("SAMPLE REVIEW TEXT:", reviews[0]["body"][:200] if reviews else "NO REVIEWS")
+
     return {
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "product_handle": product_handle,
