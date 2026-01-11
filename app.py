@@ -757,3 +757,90 @@ def get_insights(product_handle: str = "all"):
         "top_complaints": [p for p, _ in complaints.most_common(3)],
         "top_praises": [p for p, _ in praises.most_common(3)],
     }
+
+
+# -------------------------------------------------
+# 🚨 RATINGS – ACTIONABLE INSIGHTS
+# -------------------------------------------------
+@app.get("/ratings/actionable")
+def ratings_actionable(
+    product_handle: Optional[str] = Query(None),
+    days: int = Query(30),
+    recent_window: int = Query(7),
+    min_avg_rating: Optional[float] = Query(None),
+    max_negative_pct: Optional[float] = Query(None),
+):
+    """
+    Provides actionable recommendations for products based on reviews.
+    Highlights at-risk products with priority levels and suggested actions.
+    """
+    all_reviews = get_reviews_cached()
+    now = pd.Timestamp.utcnow()
+    cutoff_total = now - pd.Timedelta(days=days)
+    cutoff_recent = now - pd.Timedelta(days=recent_window)
+
+    # 🔹 Clean reviews with safe defaults
+    cleaned = []
+    for r in all_reviews:
+        dt = safe_review_datetime(r.get("created_at"))
+        if dt is None or pd.isna(dt):
+            dt = now  # fallback
+
+        handle = r.get("product_handle") or "unknown_product"
+        rating = r.get("rating") if r.get("rating") is not None else 0
+        body = r.get("body") or ""
+
+        cleaned.append({**r, "_dt": dt, "product_handle": handle, "rating": rating, "body": body})
+
+    # 🔹 Filter by product_handle if provided
+    if product_handle:
+        cleaned = [r for r in cleaned if r["product_handle"] == product_handle]
+
+    results = []
+
+    for handle in {r["product_handle"] for r in cleaned}:
+        product_reviews = [r for r in cleaned if r["product_handle"] == handle]
+
+        # 🔹 Use recent reviews if available
+        recent = [r for r in product_reviews if r["_dt"] >= cutoff_recent]
+        if not recent:
+            recent = product_reviews[-5:] if product_reviews else []
+
+        if not recent:
+            continue
+
+        summary = summarize_reviews(recent)
+        avg_rating = summary["average_rating"]
+        negative_pct = summary["negative_pct"]
+
+        # 🔹 Determine priority and recommended action
+        if avg_rating <= 3.0 or negative_pct >= 40:
+            priority = "high"
+            action = "Investigate recurring customer complaints immediately"
+        elif avg_rating < 4.0 or negative_pct >= 25:
+            priority = "medium"
+            action = "Monitor feedback and address emerging issues"
+        else:
+            priority = "low"
+            action = "No immediate action needed"
+
+        # 🔹 Apply optional filters
+        if min_avg_rating is not None and avg_rating < min_avg_rating:
+            continue
+        if max_negative_pct is not None and negative_pct > max_negative_pct:
+            continue
+
+        results.append({
+            "product_handle": handle,
+            "average_rating": avg_rating,
+            "negative_pct": negative_pct,
+            "priority": priority,
+            "recommended_action": action
+        })
+
+    return {
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "analysis_window_days": days,
+        "recent_window_days": recent_window,
+        "products": results
+    }
