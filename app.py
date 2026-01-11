@@ -647,9 +647,6 @@ def ratings_alerts(
         "products": results
     }
 
-# -------------------------------------------------
-# 🧩 RATINGS – THEMES (FIXED & WORKING)
-# -------------------------------------------------
 @app.get("/ratings/themes")
 def ratings_themes(
     product_handle: Optional[str] = Query("all"),
@@ -681,8 +678,9 @@ def ratings_themes(
 
         sentiment = analyze_sentiment(body)
 
+        # 🔧 **FIX (CRITICAL): normalize review shape**
         review_obj = {
-            "body": body
+            "body": str(body).lower()   # 🔹 CHANGED: ensure text exists & is lowercase
         }
 
         if sentiment == "Negative":
@@ -690,7 +688,7 @@ def ratings_themes(
         elif sentiment == "Positive":
             positive_reviews.append(review_obj)
         else:
-            # 🔧 NEW: Neutral reviews still contain complaint & praise signals
+            # 🔧 Neutral reviews may still contain theme signals
             negative_reviews.append(review_obj)
             positive_reviews.append(review_obj)
 
