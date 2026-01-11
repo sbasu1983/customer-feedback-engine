@@ -676,20 +676,13 @@ def ratings_alerts(
 @app.get("/ratings/themes")
 def ratings_themes(
     product_handle: Optional[str] = Query("all"),
-    days: int = Query(30)
+    days: int = Query(30)  # kept for API compatibility, not used
 ):
     all_reviews = get_reviews_cached()
-    now = pd.Timestamp.utcnow()
-    cutoff = now - pd.Timedelta(days=days)
 
     reviews = []
 
     for r in all_reviews:
-        # 🔧 FIX: do NOT drop reviews if created_at is missing
-        dt = safe_review_datetime(r.get("created_at"))
-        if dt is not None and not pd.isna(dt) and dt < cutoff:
-            continue
-
         handle = resolve_product_handle(r)
 
         body = (
@@ -713,9 +706,10 @@ def ratings_themes(
     print("SAMPLE REVIEW TEXT:", reviews[0]["body"][:200] if reviews else "NO REVIEWS")
 
     return {
-        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "product_handle": product_handle,
         "negative_themes": extract_themes(reviews, COMPLAINT_KEYWORDS),
         "positive_themes": extract_themes(reviews, PRAISE_KEYWORDS)
     }
+
 
