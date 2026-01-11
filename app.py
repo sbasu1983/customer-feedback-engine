@@ -605,16 +605,28 @@ def ratings_alerts(
         if recent_summary["average_rating"] <= 3.0:
             alerts.append("Critically low recent rating")
 
-        if alerts:
-            results.append({
-                "product_handle": handle,
-                "historical_avg_rating": hist_summary["average_rating"],
-                "recent_avg_rating": recent_summary["average_rating"],
-                "rating_drop": round(rating_diff, 2),
-                "negative_pct_change": round(negative_diff, 2),
-                "alerts": alerts,
-                "severity": "high" if len(alerts) >= 2 else "medium"
-            })
+        # 🔧 FIX: Always return product with alert context
+        if not alerts:
+            alerts.append("No critical alerts yet – monitoring recommended")
+
+        results.append({
+            "product_handle": handle,
+            "historical_avg_rating": hist_summary["average_rating"],
+            "recent_avg_rating": recent_summary["average_rating"],
+            "rating_drop": round(rating_diff, 2),
+            "negative_pct_change": round(negative_diff, 2),
+            "alerts": alerts,
+            "severity": (
+                "high"
+                if len(alerts) >= 2
+                else "medium"
+                if any(
+                    a in alerts
+                    for a in ["Average rating dropping", "Spike in negative reviews"]
+                )
+                else "low"
+            )
+        })
 
     return {
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
