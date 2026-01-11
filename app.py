@@ -674,7 +674,7 @@ def ratings_themes(
     days: int = Query(30)
 ):
     all_reviews = get_reviews_cached()
-    now = pd.Timestamp.utcnow()
+    now = pd.Timestamp.utcnow().tz_localize("UTC")  # 🔧 FIX
     cutoff = now - pd.Timedelta(days=days)
 
     positive_reviews = []
