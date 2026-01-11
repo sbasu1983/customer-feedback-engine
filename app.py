@@ -55,6 +55,14 @@ def safe_review_datetime(val):
     except Exception:
         return None
 
+def resolve_product_handle(r):
+    return (
+        r.get("product_handle")
+        or r.get("handle")
+        or r.get("product", {}).get("handle")
+        or r.get("product_title")
+    )
+
 def analyze_sentiment(text: str) -> str:
     polarity = TextBlob(text).sentiment.polarity
     if polarity > 0.1:
