@@ -116,15 +116,25 @@ PRAISE_KEYWORDS = {
     "support": ["support", "helpful", "responsive"]
 }
 
-
+# -------------------------------------------------
+# 🔍 THEME EXTRACTION (FIXED & SHARED)
+# -------------------------------------------------
 def extract_themes(reviews, keywords_map):
     themes = {}
+
     for r in reviews:
-        text = r.get("body", "").lower()
+        # 🔧 FIX: support normalized "body" input safely
+        text = r.get("body", "")
+
+        if not text:
+            continue
+
         for theme, keywords in keywords_map.items():
             if any(k in text for k in keywords):
                 themes[theme] = themes.get(theme, 0) + 1
+
     return dict(sorted(themes.items(), key=lambda x: x[1], reverse=True))
+
 
 # -------------------------------------------------
 # SHOPIFY FETCH
