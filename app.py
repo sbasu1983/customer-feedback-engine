@@ -713,6 +713,7 @@ def ratings_themes(
         "positive_themes": extract_themes(reviews, PRAISE_KEYWORDS)
     }
 
+
 @app.get("/ratings/insights")
 def get_insights(product_handle: str = "all"):
     all_reviews = fetch_all_reviews(product_handle)
@@ -725,16 +726,22 @@ def get_insights(product_handle: str = "all"):
             r.get("review", "")
             or r.get("body", "")
             or r.get("comment", "")
-        ).strip()
+        ).strip().lower()
 
         if not text:
             continue
 
-        blob = TextBlob(text)
-        polarity = blob.sentiment.polarity
+        polarity = TextBlob(text).sentiment.polarity
 
-        # extract short phrases (noun phrases work best here)
-        phrases = [p.lower() for p in blob.noun_phrases]
+        # simple phrase extraction (2–3 word chunks)
+        words = re.findall(r"\b[a-z]{3,}\b", text)
+        phrases = [
+            " ".join(words[i:i+2])
+            for i in range(len(words) - 1)
+        ] + [
+            " ".join(words[i:i+3])
+            for i in range(len(words) - 2)
+        ]
 
         if polarity < -0.1:
             for p in phrases:
