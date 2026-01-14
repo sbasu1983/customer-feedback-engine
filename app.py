@@ -173,6 +173,62 @@ def fetch_reviews(customer=Depends(get_customer)):
         "reviews_processed": total_inserted
     }
 
+@app.post("/generate-themes")
+def generate_themes(customer=Depends(get_customer)):
+    customer_id = customer["id"]
+
+    reviews_res = supabase.table("reviews") \
+        .select("product_handle, body, sentiment") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
+    if not reviews_res.data:
+        return {"status": "no_reviews"}
+
+    THEME_KEYWORDS = {
+        "quality": ["quality", "stitch", "fabric", "material"],
+        "delivery": ["delivery", "late", "delay", "shipping"],
+        "price": ["price", "cost", "expensive", "cheap"],
+        "fit": ["fit", "size", "tight", "loose"]
+    }
+
+    theme_counts = {}
+
+    for r in reviews_res.data:
+        text = (r["body"] or "").lower()
+        product = r["product_handle"] or "all"
+        sentiment = r["sentiment"]
+
+        for theme, words in THEME_KEYWORDS.items():
+            if any(w in text for w in words):
+                key = (product, sentiment, theme)
+                theme_counts[key] = theme_counts.get(key, 0) + 1
+
+    rows = []
+    now = datetime.utcnow().isoformat()
+
+    for (product, sentiment, theme), count in theme_counts.items():
+        rows.append({
+            "customer_id": customer_id,
+            "product_handle": product,
+            "type": sentiment,
+            "theme": theme,
+            "count": count,
+            "last_updated": now
+        })
+
+    if rows:
+        supabase.table("themes") \
+            .upsert(
+                rows,
+                on_conflict="customer_id,product_handle,type,theme"
+            ) \
+            .execute()
+
+    return {
+        "status": "success",
+        "themes_generated": len(rows)
+    }
 
 @app.post("/account/api-key")
 def create_api_key(customer_id: int):
