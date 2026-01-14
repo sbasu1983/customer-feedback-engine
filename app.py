@@ -131,6 +131,49 @@ def normalize_reviews(reviews: List[dict]) -> List[dict]:
 def fetch_reviews(customer=Depends(get_customer)):
     customer_id = customer["id"]
 
+    integrations = supabase.table("integrations") \
+        .select("*") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
+    if not integrations.data:
+        raise HTTPException(status_code=400, detail="No integrations configured")
+
+    total_inserted = 0
+
+    for integ in integrations.data:
+        if integ["platform"] != "judgeme":
+            continue
+
+        shop_domain = integ["shop_domain"]
+        token = integ["api_token"]
+
+        raw_reviews = fetch_judgeme_reviews(shop_domain, token)
+
+        rows = []
+        for r in raw_reviews:
+            body = r.get("body", "") or ""
+            rows.append({
+                "customer_id": customer_id,
+                "product_handle": r.get("product_handle"),
+                "rating": r.get("rating"),
+                "body": body,
+                "sentiment": sentiment(body),
+                "sentiment_score": TextBlob(body).sentiment.polarity,
+                "json_raw": r,
+                "fetched_at": datetime.utcnow().isoformat()
+            })
+
+        if rows:
+            supabase.table("reviews").upsert(rows).execute()
+            total_inserted += len(rows)
+
+    return {
+        "status": "success",
+        "reviews_processed": total_inserted
+    }
+
+
 @app.post("/account/api-key")
 def create_api_key(customer_id: int):
     raw_key, hashed_key = generate_api_key()
