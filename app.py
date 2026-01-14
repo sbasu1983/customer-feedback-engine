@@ -204,95 +204,130 @@ def ratings_all(shop_domain: str, judgeme_token: str):
     return normalize_reviews(get_reviews(shop_domain, judgeme_token))
 
 @app.get("/ratings/summary")
-def ratings_summary(shop_domain: str, judgeme_token: str):
-    reviews = normalize_reviews(get_reviews(shop_domain, judgeme_token))
-    total = len(reviews)
+def ratings_summary(customer=Depends(get_customer)):
+    customer_id = customer["id"]
 
+    res = supabase.table("reviews") \
+        .select("sentiment") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
+    total = len(res.data)
     if total == 0:
         return {"summary": "No reviews"}
 
-    positives = sum(1 for r in reviews if r["sentiment"] == "positive")
-    negatives = sum(1 for r in reviews if r["sentiment"] == "negative")
+    positives = sum(1 for r in res.data if r["sentiment"] == "positive")
+    negatives = sum(1 for r in res.data if r["sentiment"] == "negative")
 
     return {
         "total_reviews": total,
-        "positive_pct": round(positives / total * 100, 2),
-        "negative_pct": round(negatives / total * 100, 2),
+        "positive_pct": round((positives / total) * 100, 2),
+        "negative_pct": round((negatives / total) * 100, 2),
     }
 
 @app.get("/ratings/at-risk")
-def ratings_at_risk(shop_domain: str, judgeme_token: str):
-    reviews = normalize_reviews(get_reviews(shop_domain, judgeme_token))
-    return [r for r in reviews if r["rating"] <= 2]
+def ratings_at_risk(customer=Depends(get_customer)):
+    customer_id = customer["id"]
+
+    res = supabase.table("reviews") \
+        .select("product_handle, rating, body, created_at") \
+        .eq("customer_id", customer_id) \
+        .lte("rating", 2) \
+        .execute()
+
+    return res.data
 
 @app.get("/ratings/trends")
-def ratings_trends(shop_domain: str, judgeme_token: str):
-    reviews = normalize_reviews(get_reviews(shop_domain, judgeme_token))
-    buckets = {}
+def ratings_trends(customer=Depends(get_customer)):
+    customer_id = customer["id"]
 
-    for r in reviews:
+    res = supabase.table("reviews") \
+        .select("rating, created_at") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
+    buckets = {}
+    for r in res.data:
         date = r["created_at"][:10]
         buckets.setdefault(date, []).append(r["rating"])
 
     return {
-        date: round(sum(vals) / len(vals), 2)
-        for date, vals in buckets.items()
+        d: round(sum(vals) / len(vals), 2)
+        for d, vals in buckets.items()
     }
 
 @app.get("/ratings/alerts")
-def ratings_alerts(shop_domain: str, judgeme_token: str):
-    reviews = normalize_reviews(get_reviews(shop_domain, judgeme_token))
-    alerts = []
+def ratings_alerts(customer=Depends(get_customer)):
+    customer_id = customer["id"]
 
-    for r in reviews:
+    res = supabase.table("reviews") \
+        .select("rating, body") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
+    alerts = set()
+
+    for r in res.data:
         if r["rating"] <= 2:
-            alerts.append("Low rating detected")
-        if "refund" in r["text"].lower():
-            alerts.append("Refund mentioned")
+            alerts.add("Low rating detected")
+        if "refund" in (r["body"] or "").lower():
+            alerts.add("Refund mentioned")
 
-    return list(set(alerts))
+    return list(alerts)
 
 @app.get("/ratings/themes")
-def ratings_themes(shop_domain: str, judgeme_token: str):
-    reviews = normalize_reviews(get_reviews(shop_domain, judgeme_token))
+def ratings_themes(customer=Depends(get_customer)):
+    customer_id = customer["id"]
+
+    res = supabase.table("themes") \
+        .select("type, theme, count") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
     negative = {}
     positive = {}
 
-    keywords = {
-        "quality": ["quality", "stitch", "fabric"],
-        "delivery": ["delivery", "late", "delay"],
-        "price": ["price", "cost", "expensive"],
-        "fit": ["fit", "size"]
-    }
-
-    for r in reviews:
-        for theme, words in keywords.items():
-            if any(w in r["text"].lower() for w in words):
-                if r["sentiment"] == "negative":
-                    negative[theme] = negative.get(theme, 0) + 1
-                elif r["sentiment"] == "positive":
-                    positive[theme] = positive.get(theme, 0) + 1
+    for row in res.data:
+        if row["type"] == "negative":
+            negative[row["theme"]] = row["count"]
+        else:
+            positive[row["theme"]] = row["count"]
 
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "product_handle": "all",
         "negative_themes": negative,
-        "positive_themes": positive,
+        "positive_themes": positive
     }
 
+
 @app.get("/ratings/insights")
-def ratings_insights(shop_domain: str, judgeme_token: str):
-    reviews = normalize_reviews(get_reviews(shop_domain, judgeme_token))
-    texts = [r["text"].lower() for r in reviews]
+def ratings_insights(customer=Depends(get_customer)):
+    customer_id = customer["id"]
+
+    res = supabase.table("reviews") \
+        .select("body, sentiment") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
+    complaints = [
+        r["body"] for r in res.data
+        if r["sentiment"] == "negative"
+    ][:3]
+
+    praises = [
+        r["body"] for r in res.data
+        if r["sentiment"] == "positive"
+    ][:3]
 
     return {
-        "top_complaints": list(set(t for t in texts if "bad" in t))[:3],
-        "top_praises": list(set(t for t in texts if "good" in t))[:3],
+        "top_complaints": complaints,
+        "top_praises": praises
     }
 
 @app.get("/ratings/actionable")
-def ratings_actionable(shop_domain: str, judgeme_token: str):
-    summary = ratings_summary(shop_domain, judgeme_token)
+def ratings_actionable(customer=Depends(get_customer)):
+    summary = ratings_summary(customer)
 
     if summary.get("negative_pct", 0) > 30:
         return {"action": "Investigate product quality issues"}
@@ -300,14 +335,21 @@ def ratings_actionable(shop_domain: str, judgeme_token: str):
     return {"action": "No immediate action required"}
 
 @app.get("/ratings/actionable-themes")
-def ratings_actionable_themes(shop_domain: str, judgeme_token: str):
-    themes = ratings_themes(shop_domain, judgeme_token)
+def ratings_actionable_themes(customer=Depends(get_customer)):
+    customer_id = customer["id"]
+
+    res = supabase.table("themes") \
+        .select("theme, count") \
+        .eq("customer_id", customer_id) \
+        .eq("type", "negative") \
+        .execute()
+
     actions = []
 
-    if themes["negative_themes"].get("quality", 0) > 5:
-        actions.append("Audit manufacturing quality")
-
-    if themes["negative_themes"].get("delivery", 0) > 3:
-        actions.append("Review logistics partner")
+    for t in res.data:
+        if t["theme"] == "quality" and t["count"] > 5:
+            actions.append("Audit manufacturing quality")
+        if t["theme"] == "delivery" and t["count"] > 3:
+            actions.append("Review logistics partner")
 
     return {"recommended_actions": actions}
