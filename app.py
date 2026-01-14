@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict
 from textblob import TextBlob
 from datetime import datetime, timedelta
+from supabase import create_client
 from threading import Lock
 import requests
 import os
@@ -21,6 +22,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Supabase credentials not set")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # -------------------------------------------------
 # PER-CUSTOMER CACHES (MULTI-TENANT SAFE)
