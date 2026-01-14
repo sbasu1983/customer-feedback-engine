@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException
+from fastapi import Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict
 from textblob import TextBlob
@@ -43,6 +44,31 @@ def generate_api_key():
     raw_key = secrets.token_urlsafe(32)
     hashed_key = hashlib.sha256(raw_key.encode()).hexdigest()
     return raw_key, hashed_key
+
+def get_current_customer(x_api_key: str = Header(...)):
+    hashed_key = hashlib.sha256(x_api_key.encode()).hexdigest()
+
+    res = supabase.table("customers") \
+        .select("id, name") \
+        .eq("api_key_hash", hashed_key) \
+        .execute()
+
+    if not res.data:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    return res.data[0]
+    
+def get_customer(x_api_key: str = Header(...)):
+    hashed = hashlib.sha256(x_api_key.encode()).hexdigest()
+
+    res = supabase.table("customers").select("*")\
+        .eq("api_key_hash", hashed)\
+        .single().execute()
+
+    if not res.data:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    return res.data
     
 def sentiment(text: str) -> str:
     polarity = TextBlob(text).sentiment.polarity
@@ -93,6 +119,9 @@ def normalize_reviews(reviews: List[dict]) -> List[dict]:
 # ENDPOINTS (ALL PRESERVED & MULTI-TENANT)
 # -------------------------------------------------
 
+@app.post("/fetch-reviews")
+def fetch_reviews(customer=Depends(get_customer)):
+    customer_id = customer["id"]
 
 @app.post("/account/api-key")
 def create_api_key(customer_id: int):
