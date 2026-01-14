@@ -1,5 +1,4 @@
-from fastapi import FastAPI, Query, HTTPException
-from fastapi import Header, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict
 from textblob import TextBlob
