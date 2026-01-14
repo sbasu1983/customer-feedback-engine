@@ -1,5 +1,7 @@
-requests
-pandas
-textblob
-fastapi
-uvicorn
+fastapi>=0.110
+uvicorn>=0.27
+requests>=2.31
+supabase>=2.4
+pandas>=2.2
+textblob>=0.18
+python-dotenv>=1.0
