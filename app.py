@@ -86,6 +86,53 @@ def sentiment(text: str) -> str:
         return "negative"
     return "neutral"
 
+def generate_theme_insights(customer_id: int):
+    res = supabase.table("reviews") \
+        .select("product_handle, body, sentiment") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
+    if not res.data:
+        return {"status": "no reviews"}
+
+    keywords = {
+        "quality": ["quality", "fabric", "stitch"],
+        "delivery": ["delivery", "late", "delay"],
+        "price": ["price", "expensive", "cheap"],
+        "fit": ["fit", "size"]
+    }
+
+    aggregated = {}
+
+    for r in res.data:
+        product = r["product_handle"] or "all"
+        text = (r["body"] or "").lower()
+        sentiment = r["sentiment"]
+
+        for theme, words in keywords.items():
+            if any(w in text for w in words):
+                key = (product, theme, sentiment)
+                aggregated[key] = aggregated.get(key, 0) + 1
+
+    rows = []
+    for (product, theme, sentiment), count in aggregated.items():
+        rows.append({
+            "customer_id": customer_id,
+            "product_handle": product,
+            "type": sentiment,          # positive / negative / neutral
+            "theme": theme,
+            "count": count,
+            "last_updated": datetime.utcnow().isoformat()
+        })
+
+    if rows:
+        supabase.table("themes").upsert(
+            rows,
+            on_conflict="customer_id,product_handle,type,theme"
+        ).execute()
+
+    return {"themes_generated": len(rows)}
+
 def fetch_judgeme_reviews(shop_domain: str, token: str) -> List[dict]:
     url = f"https://judge.me/api/v1/reviews?shop_domain={shop_domain}&api_token={token}"
     resp = requests.get(url, timeout=20)
@@ -172,6 +219,10 @@ def fetch_reviews(customer=Depends(get_customer)):
         "status": "success",
         "reviews_processed": total_inserted
     }
+
+@app.post("/insights/generate")
+def generate_insights(customer=Depends(get_customer)):
+    return generate_theme_insights(customer["id"])
 
 @app.post("/generate-themes")
 def generate_themes(customer=Depends(get_customer)):
@@ -331,31 +382,17 @@ def ratings_alerts(customer=Depends(get_customer)):
 
     return list(alerts)
 
-@app.get("/ratings/themes")
-def ratings_themes(customer=Depends(get_customer)):
-    customer_id = customer["id"]
-
+@app.get("/insights/themes")
+def get_themes(customer=Depends(get_customer)):
     res = supabase.table("themes") \
-        .select("type, theme, count") \
-        .eq("customer_id", customer_id) \
+        .select("product_handle, type, theme, count") \
+        .eq("customer_id", customer["id"]) \
         .execute()
 
-    negative = {}
-    positive = {}
-
-    for row in res.data:
-        if row["type"] == "negative":
-            negative[row["theme"]] = row["count"]
-        else:
-            positive[row["theme"]] = row["count"]
-
     return {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
-        "product_handle": "all",
-        "negative_themes": negative,
-        "positive_themes": positive
+        "generated_at": datetime.utcnow().isoformat(),
+        "data": res.data
     }
-
 
 @app.get("/ratings/insights")
 def ratings_insights(customer=Depends(get_customer)):
