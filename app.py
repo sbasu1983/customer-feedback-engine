@@ -7,6 +7,8 @@ from threading import Lock
 import requests
 import os
 import time
+import secrets
+import hashlib
 
 # -------------------------------------------------
 # APP INITIALIZATION (FIXES NameError)
@@ -37,6 +39,11 @@ def get_lock(shop_domain: str) -> Lock:
         locks[shop_domain] = Lock()
     return locks[shop_domain]
 
+def generate_api_key():
+    raw_key = secrets.token_urlsafe(32)
+    hashed_key = hashlib.sha256(raw_key.encode()).hexdigest()
+    return raw_key, hashed_key
+    
 def sentiment(text: str) -> str:
     polarity = TextBlob(text).sentiment.polarity
     if polarity > 0.1:
@@ -85,6 +92,20 @@ def normalize_reviews(reviews: List[dict]) -> List[dict]:
 # -------------------------------------------------
 # ENDPOINTS (ALL PRESERVED & MULTI-TENANT)
 # -------------------------------------------------
+
+
+@app.post("/account/api-key")
+def create_api_key(customer_id: int):
+    raw_key, hashed_key = generate_api_key()
+
+    supabase.table("customers").update({
+        "api_key_hash": hashed_key
+    }).eq("id", customer_id).execute()
+
+    return {
+        "api_key": raw_key,
+        "warning": "Store this key securely. It will not be shown again."
+    }
 
 @app.get("/ratings")
 def ratings(
