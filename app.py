@@ -170,9 +170,62 @@ def normalize_reviews(reviews: List[dict]) -> List[dict]:
         })
     return normalized
 
+def generate_rating_metrics(customer_id: int):
+    res = supabase.table("reviews") \
+        .select("product_handle, rating, sentiment, body") \
+        .eq("customer_id", customer_id) \
+        .execute()
+
+    if not res.data:
+        return {"status": "no reviews"}
+
+    buckets = {}
+
+    for r in res.data:
+        product = r["product_handle"] or "all"
+        buckets.setdefault(product, []).append(r)
+
+    rows = []
+
+    for product, reviews in buckets.items():
+        total = len(reviews)
+        avg = sum(r["rating"] for r in reviews) / total
+
+        pos = sum(1 for r in reviews if r["sentiment"] == "positive")
+        neg = sum(1 for r in reviews if r["sentiment"] == "negative")
+        neu = total - pos - neg
+
+        alerts = []
+        if neg / total > 0.3:
+            alerts.append("High negative sentiment")
+
+        if any("refund" in (r["body"] or "").lower() for r in reviews):
+            alerts.append("Refund mentioned")
+
+        rows.append({
+            "customer_id": customer_id,
+            "product_handle": product,
+            "total_reviews": total,
+            "avg_rating": round(avg, 2),
+            "positive_pct": round(pos / total * 100, 2),
+            "negative_pct": round(neg / total * 100, 2),
+            "neutral_pct": round(neu / total * 100, 2),
+            "at_risk": avg < 3.5 or neg / total > 0.3,
+            "alerts": alerts,
+            "last_updated": datetime.utcnow().isoformat()
+        })
+
+    supabase.table("rating_metrics").upsert(
+        rows,
+        on_conflict="customer_id,product_handle"
+    ).execute()
+
+    return {"metrics_generated": len(rows)}
+
 # -------------------------------------------------
 # ENDPOINTS (ALL PRESERVED & MULTI-TENANT)
 # -------------------------------------------------
+
 
 @app.post("/fetch-reviews")
 def fetch_reviews(customer=Depends(get_customer)):
@@ -280,6 +333,22 @@ def generate_themes(customer=Depends(get_customer)):
         "status": "success",
         "themes_generated": len(rows)
     }
+
+@app.get("/insights/ratings")
+def get_rating_metrics(customer=Depends(get_customer)):
+    res = supabase.table("rating_metrics") \
+        .select("*") \
+        .eq("customer_id", customer["id"]) \
+        .execute()
+
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "data": res.data
+    }
+
+@app.post("/insights/ratings/generate")
+def generate_ratings(customer=Depends(get_customer)):
+    return generate_rating_metrics(customer["id"])
 
 @app.post("/account/api-key")
 def create_api_key(customer_id: int):
@@ -394,6 +463,7 @@ def get_themes(customer=Depends(get_customer)):
         "data": res.data
     }
 
+
 @app.get("/ratings/insights")
 def ratings_insights(customer=Depends(get_customer)):
     customer_id = customer["id"]
@@ -420,9 +490,12 @@ def ratings_insights(customer=Depends(get_customer)):
 
 @app.get("/ratings/actionable")
 def ratings_actionable(customer=Depends(get_customer)):
-    summary = ratings_summary(customer)
+    res = supabase.table("rating_metrics") \
+        .select("negative_pct") \
+        .eq("customer_id", customer["id"]) \
+        .execute()
 
-    if summary.get("negative_pct", 0) > 30:
+    if any(r["negative_pct"] > 30 for r in res.data):
         return {"action": "Investigate product quality issues"}
 
     return {"action": "No immediate action required"}
