@@ -268,6 +268,11 @@ def fetch_reviews(customer=Depends(get_customer)):
             supabase.table("reviews").upsert(rows).execute()
             total_inserted += len(rows)
 
+    # -----------------------------
+    # ✅ NEW: Automatically generate themes and rating metrics
+    generate_theme_insights(customer_id)       # update 'themes' table
+    generate_rating_metrics(customer_id)       # update 'rating_metrics' table
+    # -----------------------------
     return {
         "status": "success",
         "reviews_processed": total_inserted
