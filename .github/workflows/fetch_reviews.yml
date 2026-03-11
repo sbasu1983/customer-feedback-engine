@@ -10,21 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
+      - name: Trigger API cron job
         run: |
-          pip install -r requirements.txt
-
-      - name: Run review fetcher
-        env:
-          JUDGEME_API_TOKEN: ${{ secrets.JUDGEME_API_TOKEN }}
-          SHOP_DOMAIN: ${{ secrets.SHOP_DOMAIN }}
-        run: |
-          python scripts/fetch_reviews.py
+          curl -X POST https://customer-feedback-api.onrender.com/cron/fetch-reviews \
+          -H "secret: ${{ secrets.CRON_SECRET }}"
