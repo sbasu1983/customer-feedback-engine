@@ -282,6 +282,22 @@ def fetch_reviews(customer=Depends(get_customer)):
 def generate_insights(customer=Depends(get_customer)):
     return generate_theme_insights(customer["id"])
 
+@app.post("/connect-store")
+def connect_store(
+    shop_domain: str,
+    judgeme_token: str,
+    customer=Depends(get_customer)
+):
+
+    res = supabase.table("integrations").insert({
+        "customer_id": customer["id"],
+        "platform": "judgeme",
+        "shop_domain": shop_domain,
+        "api_token": judgeme_token
+    }).execute()
+
+    return {"status": "connected"}
+
 @app.post("/generate-themes")
 def generate_themes(customer=Depends(get_customer)):
     customer_id = customer["id"]
