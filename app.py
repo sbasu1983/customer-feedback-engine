@@ -5,6 +5,9 @@ from textblob import TextBlob
 from datetime import datetime, timedelta
 from supabase import create_client
 from threading import Lock
+import openai
+from sklearn.cluster import KMeans  # for clustering
+import numpy as np
 import requests
 import os
 import time
@@ -15,6 +18,7 @@ import hashlib
 # APP INITIALIZATION (FIXES NameError)
 # -------------------------------------------------
 app = FastAPI(title="Customer Feedback Insights API")
+openai.api_key = os.getenv("OPENAI_API_KEY")  # make sure you set this
 
 app.add_middleware(
     CORSMiddleware,
@@ -297,7 +301,44 @@ def connect_store(
     }).execute()
 
     return {"status": "connected"}
+    
+@app.get("/insights/ai")
+def get_ai_insights(customer=Depends(get_customer)):
+    # Step 1: Fetch reviews from Supabase
+    res = supabase.table("reviews").select("id, body").eq("customer_id", customer["id"]).execute()
+    reviews = [r for r in res.data if r.get("body")]
 
+    if not reviews:
+        return {"clusters": [], "message": "No reviews found"}
+
+    # Step 2: Get embeddings from OpenAI
+    texts = [r["body"] for r in reviews]
+    response = openai.Embedding.create(model="text-embedding-3-small", input=texts)
+    embeddings = np.array([d["embedding"] for d in response["data"]])
+
+    # Step 3: Cluster embeddings (example: 3 clusters)
+    kmeans = KMeans(n_clusters=min(3, len(embeddings)), random_state=42)
+    labels = kmeans.fit_predict(embeddings)
+
+    # Step 4: Summarize each cluster using OpenAI
+    cluster_summaries = []
+    for i in range(max(labels)+1):
+        cluster_texts = [texts[j] for j in range(len(texts)) if labels[j] == i]
+        prompt = f"Summarize these customer complaints in one sentence:\n\n{cluster_texts}"
+        summary_resp = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        summary = summary_resp.choices[0].message.content
+        cluster_summaries.append({
+            "cluster_id": i,
+            "summary": summary,
+            "reviews_count": len(cluster_texts)
+        })
+
+    return {"clusters": cluster_summaries}
+    
 @app.post("/generate-themes")
 def generate_themes(customer=Depends(get_customer)):
     customer_id = customer["id"]
