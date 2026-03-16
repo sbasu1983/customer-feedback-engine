@@ -325,34 +325,58 @@ def connect_store(
     return {"status": "connected"}
     
 @app.get("/insights/ai")
-def get_ai_insights(customer=Depends(get_customer)):
-    # Step 1: Fetch reviews from Supabase
+def get_ai_insights(customer=Depends(get_customer), batch_size: int = 10, max_retries: int = 3):
+    # Step 1: Fetch reviews
     res = supabase.table("reviews").select("id, body").eq("customer_id", customer["id"]).execute()
     reviews = [r for r in res.data if r.get("body")]
-
     if not reviews:
         return {"clusters": [], "message": "No reviews found"}
 
-    # Step 2: Get embeddings from OpenAI
     texts = [r["body"] for r in reviews]
-    response = client.embeddings.create(model="text-embedding-3-small",input=texts)
-    embeddings = np.array([d.embedding for d in response.data])
 
-    # Step 3: Cluster embeddings (example: 3 clusters)
+    # Step 2: Get embeddings in batches with retry
+    embeddings = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i+batch_size]
+        for attempt in range(max_retries):
+            try:
+                resp = openai.embeddings.create(model="text-embedding-3-small", input=batch)
+                embeddings.extend([d.embedding for d in resp.data])
+                break  # success, exit retry loop
+            except RateLimitError:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # exponential backoff
+                    continue
+                else:
+                    raise HTTPException(status_code=503, detail="OpenAI quota exceeded. Try later.")
+
+    embeddings = np.array(embeddings)
+
+    # Step 3: Cluster embeddings
     kmeans = KMeans(n_clusters=min(3, len(embeddings)), random_state=42)
     labels = kmeans.fit_predict(embeddings)
 
-    # Step 4: Summarize each cluster using OpenAI
+    # Step 4: Summarize clusters
     cluster_summaries = []
     for i in range(max(labels)+1):
         cluster_texts = [texts[j] for j in range(len(texts)) if labels[j] == i]
         prompt = f"Summarize these customer complaints in one sentence:\n\n{cluster_texts}"
-        summary_resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
-        )
-        summary = summary_resp.choices[0].message.content
+        for attempt in range(max_retries):
+            try:
+                summary_resp = openai.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3
+                )
+                summary = summary_resp.choices[0].message.content
+                break
+            except RateLimitError:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    summary = "Rate limit exceeded, summary unavailable."
+
         cluster_summaries.append({
             "cluster_id": i,
             "summary": summary,
