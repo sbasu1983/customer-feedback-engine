@@ -282,6 +282,28 @@ def fetch_reviews(customer=Depends(get_customer)):
         "reviews_processed": total_inserted
     }
 
+@app.post("/account/create-customer")
+def create_customer(name: str, email: str):
+    # Insert new customer
+    res = supabase.table("customers").insert({
+        "name": name,
+        "email": email,
+        "created_at": datetime.utcnow().isoformat()
+    }).execute()
+
+    if not res.data:
+        raise HTTPException(status_code=500, detail="Could not create customer")
+
+    customer_id = res.data[0]["id"]
+
+    # Generate API key
+    raw_key, hashed_key = generate_api_key()
+    supabase.table("customers").update({
+        "api_key_hash": hashed_key
+    }).eq("id", customer_id).execute()
+
+    return {"customer_id": customer_id, "api_key": raw_key}
+    
 @app.post("/insights/generate")
 def generate_insights(customer=Depends(get_customer)):
     return generate_theme_insights(customer["id"])
