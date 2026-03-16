@@ -7,6 +7,7 @@ from supabase import create_client
 from threading import Lock
 from sklearn.cluster import KMeans  # for clustering
 from openai import OpenAI
+from openai.error import RateLimitError
 import numpy as np
 import requests
 import os
